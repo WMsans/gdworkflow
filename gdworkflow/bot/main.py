@@ -37,11 +37,27 @@ class PendingQuestion:
 
 
 @dataclass
+class ApprovalRequest:
+    feature_id: str
+    message_id: int | None = None
+    future: asyncio.Future = field(default_factory=lambda: asyncio.get_event_loop().create_future())
+    status: str = "pending"
+    reason: str = ""
+
+
+@dataclass
+class ApprovalState:
+    feature_id: str
+    status: str = "pending"
+
+
+@dataclass
 class Config:
     bot_token: str = BOT_TOKEN
     guild_id: int | None = GUILD_ID
     http_port: int = HTTP_PORT
     question_timeout: int = QUESTION_TIMEOUT
+    approval_timeout: int = int(os.environ.get("APPROVAL_TIMEOUT", "3600"))
 
 
 def load_config() -> Config:
@@ -54,6 +70,8 @@ class DiscordBot(commands.Bot):
         self.target_guild_id: int | None = guild_id
         self._ready_event = asyncio.Event()
         self.pending_questions: dict[str, PendingQuestion] = {}
+        self.pending_approvals: dict[str, ApprovalRequest] = {}
+        self.approval_states: dict[str, ApprovalState] = {}
 
     async def on_ready(self):
         log.info("Bot ready. Guilds: %s", [g.name for g in self.guilds])
@@ -149,6 +167,7 @@ def create_bot(cfg: Config) -> DiscordBot:
     intents = nextcord.Intents.default()
     intents.guilds = True
     intents.message_content = True
+    intents.reactions = True
     bot = DiscordBot(guild_id=cfg.guild_id, intents=intents)
 
     @bot.slash_command(name="ping", description="Health check", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
@@ -163,6 +182,36 @@ def create_bot(cfg: Config) -> DiscordBot:
         else:
             await interaction.send(f"Could not find or resolve question `{question_id}`. It may have timed out or already been answered.", ephemeral=True)
 
+    @bot.slash_command(name="approve", description="Approve a feature", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
+    async def _approve(interaction: nextcord.Interaction, feature_id: str):
+        ar = bot.pending_approvals.get(feature_id)
+        if ar is None:
+            await interaction.send(f"No pending approval for `{feature_id}`.", ephemeral=True)
+            return
+        if ar.future.done():
+            await interaction.send(f"Approval for `{feature_id}` already resolved.", ephemeral=True)
+            return
+        ar.status = "approved"
+        ar.reason = ""
+        ar.future.set_result("approved")
+        bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="approved")
+        await interaction.send(f"**Approved** `{feature_id}`")
+
+    @bot.slash_command(name="reject", description="Reject a feature", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
+    async def _reject(interaction: nextcord.Interaction, feature_id: str, reason: str = ""):
+        ar = bot.pending_approvals.get(feature_id)
+        if ar is None:
+            await interaction.send(f"No pending approval for `{feature_id}`.", ephemeral=True)
+            return
+        if ar.future.done():
+            await interaction.send(f"Approval for `{feature_id}` already resolved.", ephemeral=True)
+            return
+        ar.status = "rejected"
+        ar.reason = reason
+        ar.future.set_result("rejected")
+        bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="rejected")
+        await interaction.send(f"**Rejected** `{feature_id}`{' — ' + reason if reason else ''}")
+
     @bot.event
     async def on_message(message: nextcord.Message):
         if message.author.bot:
@@ -176,6 +225,26 @@ def create_bot(cfg: Config) -> DiscordBot:
                 resolved = await bot.resolve_question(qid, answer)
                 if resolved:
                     await message.add_reaction("✅")
+                return
+
+    @bot.event
+    async def on_raw_reaction_add(payload: nextcord.RawReactionActionEvent):
+        if payload.emoji.name not in ("✅", "❌"):
+            return
+        if payload.user_id == bot.user.id:
+            return
+        for feature_id, ar in bot.pending_approvals.items():
+            if ar.message_id == payload.message_id and not ar.future.done():
+                if payload.emoji.name == "✅":
+                    ar.status = "approved"
+                    ar.reason = ""
+                    ar.future.set_result("approved")
+                    bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="approved")
+                elif payload.emoji.name == "❌":
+                    ar.status = "rejected"
+                    ar.reason = ""
+                    ar.future.set_result("rejected")
+                    bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="rejected")
                 return
 
     return bot
@@ -288,6 +357,132 @@ async def _handle_health(_request: aiohttp_web.Request) -> aiohttp_web.Response:
     return aiohttp_web.json_response({"status": "ok"})
 
 
+async def _handle_post_review_result(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    bot: DiscordBot = request.app["bot"]
+    if not bot._ready_event.is_set():
+        return aiohttp_web.json_response({"ok": False, "error": "bot not ready yet"}, status=503)
+    try:
+        body: dict[str, Any] = await request.json()
+    except json.JSONDecodeError:
+        return aiohttp_web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+    feature_id = body.get("feature_id", "")
+    feature_name = body.get("feature_name", "")
+    test_summary = body.get("test_summary", "")
+    verdict = body.get("verdict", "")
+    review_notes = body.get("review_notes", "")
+    screenshot_paths = body.get("screenshot_paths", [])
+
+    if not feature_id:
+        return aiohttp_web.json_response(
+            {"ok": False, "error": "field 'feature_id' is required"}, status=400
+        )
+
+    verdict_emoji = {"PASS": "✅", "PASS_WITH_NOTES": "⚠️", "FAIL": "❌"}.get(verdict, "❓")
+
+    lines = [
+        f"**Review Result: {feature_name}** (`{feature_id}`)",
+        f"Verdict: {verdict_emoji} {verdict}",
+        f"Tests: {test_summary}",
+    ]
+    if review_notes:
+        lines.append(f"\n{review_notes}")
+
+    message = "\n".join(lines)
+
+    ch = await bot._find_channel_by_name("features")
+    if ch is None:
+        return aiohttp_web.json_response(
+            {"ok": False, "error": "channel 'features' not found"}, status=404
+        )
+
+    files = []
+    for sp in screenshot_paths:
+        p = Path(sp)
+        if p.exists():
+            files.append(nextcord.File(str(p)))
+
+    try:
+        if files:
+            await ch.send(message, files=files)
+        else:
+            await ch.send(message)
+    except nextcord.HTTPException as exc:
+        log.error("Failed to send review result: %s", exc)
+        return aiohttp_web.json_response(
+            {"ok": False, "error": f"send failed: {exc}"}, status=500
+        )
+
+    return aiohttp_web.json_response({"ok": True, "verdict": verdict})
+
+
+async def _handle_request_approval(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    bot: DiscordBot = request.app["bot"]
+    cfg: Config = request.app["config"]
+    if not bot._ready_event.is_set():
+        return aiohttp_web.json_response({"ok": False, "error": "bot not ready yet"}, status=503)
+    try:
+        body: dict[str, Any] = await request.json()
+    except json.JSONDecodeError:
+        return aiohttp_web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+    feature_id = body.get("feature_id", "")
+    timeout_seconds = body.get("timeout", cfg.approval_timeout)
+
+    if not feature_id:
+        return aiohttp_web.json_response(
+            {"ok": False, "error": "field 'feature_id' is required"}, status=400
+        )
+
+    loop = asyncio.get_event_loop()
+    ar = ApprovalRequest(
+        feature_id=feature_id,
+        future=loop.create_future(),
+        status="pending",
+    )
+    bot.pending_approvals[feature_id] = ar
+    bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="pending")
+
+    ch = await bot._find_channel_by_name("features")
+    if ch is not None:
+        try:
+            msg = await ch.send(
+                f"**Approval Request: `{feature_id}`**\n"
+                f"React with ✅ to approve or ❌ to reject.\n"
+                f"Or use `/approve {feature_id}` or `/reject {feature_id} <reason>`"
+            )
+            await msg.add_reaction("✅")
+            await msg.add_reaction("❌")
+            ar.message_id = msg.id
+        except nextcord.HTTPException as exc:
+            log.error("Failed to send approval request: %s", exc)
+
+    try:
+        result = await asyncio.wait_for(ar.future, timeout=timeout_seconds)
+        ar.status = result
+        return aiohttp_web.json_response({
+            "ok": True,
+            "status": result,
+            "feature_id": feature_id,
+            "reason": ar.reason,
+        })
+    except asyncio.TimeoutError:
+        ar.status = "timeout"
+        bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="timeout")
+        return aiohttp_web.json_response({
+            "ok": True,
+            "status": "timeout",
+            "feature_id": feature_id,
+            "message": "Approval request timed out.",
+        }, status=200)
+
+
+async def _handle_approval_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    bot: DiscordBot = request.app["bot"]
+    states = {fid: s.status for fid, s in bot.approval_states.items()}
+    return aiohttp_web.json_response({"approval_states": states})
+
+
 def create_http_app(bot: DiscordBot, cfg: Config) -> aiohttp_web.Application:
     app = aiohttp_web.Application()
     app["bot"] = bot
@@ -295,7 +490,10 @@ def create_http_app(bot: DiscordBot, cfg: Config) -> aiohttp_web.Application:
     app.router.add_post("/post_update", _handle_post_update)
     app.router.add_post("/announce_milestone", _handle_announce_milestone)
     app.router.add_post("/post_question", _handle_post_question)
+    app.router.add_post("/post_review_result", _handle_post_review_result)
+    app.router.add_post("/request_approval", _handle_request_approval)
     app.router.add_get("/health", _handle_health)
+    app.router.add_get("/approval_status", _handle_approval_status)
     return app
 
 

@@ -108,28 +108,28 @@ Goal by end of week: features are automatically tested and screenshotted after s
 
 ### gdUnit4 integration **CRITICAL PATH**
 
-- [ ] **Install gdUnit4 in the sandbox project** and write a hand-crafted test for an existing feature to confirm the command line works. (1.5h)
-- [ ] **Write a reusable test runner script** `run_tests.sh` that invokes `godot --headless` with gdUnit4 and writes JUnit XML to a known path. (1.5h)
-- [ ] **Write a JUnit XML parser** in Go or Python that extracts pass/fail counts and failure messages. (1h)
+- [x] **Install gdUnit4 in the sandbox project** and write a hand-crafted test for an existing feature to confirm the command line works. (1.5h)
+- [x] **Write a reusable test runner script** `run_tests.sh` that invokes `godot --headless` with gdUnit4 and writes JUnit XML to a known path. (1.5h)
+- [x] **Write a JUnit XML parser** in Go or Python that extracts pass/fail counts and failure messages. (1h)
 
 ### Screenshot harness **CRITICAL PATH**
 
-- [ ] **Write a GDScript helper** `capture_scene.gd` that loads a given scene path, positions a camera, lets the scene run for N frames, and saves a PNG to a given output path. (3h)
-- [ ] **Decide screenshot conventions**: camera framing, lighting, how many frames to let pass before capture. Document in a README. (1h)
+- [x] **Write a GDScript helper** `capture_scene.gd` that loads a given scene path, positions a camera, lets the scene run for N frames, and saves a PNG to a given output path. (3h)
+- [x] **Decide screenshot conventions**: camera framing, lighting, how many frames to let pass before capture. Document in a README. (1h)
 - [ ] **Test on 3 different feature scenes** of varying type (UI, 2D gameplay, 3D gameplay if applicable). (2h)
 
 ### Reviewer agent **CRITICAL PATH**
 
-- [ ] **Design the reviewer agent's system prompt**: write gdUnit4 tests for the feature scene, focus on behavioral tests of public API, run the tests, capture a screenshot, post results. (2h)
-- [ ] **Implement reviewer invocation** in the orchestrator: after subagent `DONE`, start a second `opencode serve` in the same worktree with the reviewer agent config and POST the review task prompt. (2h)
-- [ ] **Implement result posting to Discord** via new bot endpoint `post_review_result(feature, test_summary, screenshot_paths)`. Attach screenshots as Discord attachments. (3h)
+- [x] **Design the reviewer agent's system prompt**: write gdUnit4 tests for the feature scene, focus on behavioral tests of public API, run the tests, capture a screenshot, post results. (2h)
+- [x] **Implement reviewer invocation** in the orchestrator: after subagent `DONE`, start a second `opencode serve` in the same worktree with the reviewer agent config and POST the review task prompt. (2h)
+- [x] **Implement result posting to Discord** via new bot endpoint `post_review_result(feature, test_summary, screenshot_paths)`. Attach screenshots as Discord attachments. (3h)
 - [ ] **Test the reviewer end-to-end** on a completed subagent's output. (2h)
 
 ### Approval flow **CRITICAL PATH**
 
-- [ ] **Implement `request_approval` endpoint** in Discord bot. Blocks until ✅ reaction, `/approve`, or `/reject` fires. (3h)
-- [ ] **Implement rejection retry logic** in orchestrator: on reject, delete worktree, create new one on same branch, re-dispatch with rejection reason added to task description. Cap at 2 retries. (2h)
-- [ ] **Implement approval state tracking**: keep a map `feature_id → approved | rejected | pending` in memory, persisted nowhere (consistent with no-state-persistence rule). (1h)
+- [x] **Implement `request_approval` endpoint** in Discord bot. Blocks until ✅ reaction, `/approve`, or `/reject` fires. (3h)
+- [x] **Implement rejection retry logic** in orchestrator: on reject, delete worktree, create new one on same branch, re-dispatch with rejection reason added to task description. Cap at 2 retries. (2h)
+- [x] **Implement approval state tracking**: keep a map `feature_id → approved | rejected | pending` in memory, persisted nowhere (consistent with no-state-persistence rule). (1h)
 
 ### End-of-week integration test
 
