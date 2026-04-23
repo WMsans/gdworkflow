@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,35 @@ def load_config() -> Config:
 
 
 class DiscordBot(commands.Bot):
+    def __init__(self, guild_id: int | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.target_guild_id: int | None = guild_id
+        self._ready_event = asyncio.Event()
+
+    async def on_ready(self):
+        log.info("Bot ready. Guilds: %s", [g.name for g in self.guilds])
+        for g in self.guilds:
+            log.info("  %s (id=%d) channels: %s", g.name, g.id, [c.name for c in g.text_channels])
+        self._ready_event.set()
+
+    async def wait_until_cache_ready(self, timeout: float = 10.0) -> bool:
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
     async def _find_channel_by_name(self, name: str) -> nextcord.TextChannel | None:
+        if not await self.wait_until_cache_ready():
+            log.warning("Cache not ready when looking for channel '%s'", name)
+
+        if self.target_guild_id is not None:
+            guild = self.get_guild(self.target_guild_id)
+            if guild is not None:
+                ch = nextcord.utils.get(guild.text_channels, name=name)
+                if ch is not None:
+                    return ch
+
         for guild in self.guilds:
             ch = nextcord.utils.get(guild.text_channels, name=name)
             if ch is not None:
@@ -74,9 +103,9 @@ def create_bot(cfg: Config) -> DiscordBot:
     intents = nextcord.Intents.default()
     intents.guilds = True
     intents.message_content = True
-    bot = DiscordBot(intents=intents)
+    bot = DiscordBot(guild_id=cfg.guild_id, intents=intents)
 
-    @bot.slash_command(name="ping", description="Health check")
+    @bot.slash_command(name="ping", description="Health check", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
     async def _ping(interaction: nextcord.Interaction):
         await interaction.send("Pong!")
 
@@ -85,6 +114,8 @@ def create_bot(cfg: Config) -> DiscordBot:
 
 async def _handle_post_update(request: aiohttp_web.Request) -> aiohttp_web.Response:
     bot: DiscordBot = request.app["bot"]
+    if not bot._ready_event.is_set():
+        return aiohttp_web.json_response({"ok": False, "error": "bot not ready yet"}, status=503)
     try:
         body: dict[str, Any] = await request.json()
     except json.JSONDecodeError:
@@ -107,6 +138,8 @@ async def _handle_post_update(request: aiohttp_web.Request) -> aiohttp_web.Respo
 
 async def _handle_announce_milestone(request: aiohttp_web.Request) -> aiohttp_web.Response:
     bot: DiscordBot = request.app["bot"]
+    if not bot._ready_event.is_set():
+        return aiohttp_web.json_response({"ok": False, "error": "bot not ready yet"}, status=503)
     try:
         body: dict[str, Any] = await request.json()
     except json.JSONDecodeError:

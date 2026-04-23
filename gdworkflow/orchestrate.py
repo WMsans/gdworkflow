@@ -16,7 +16,6 @@ from typing import Optional
 import yaml
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "todo_frontmatter.json"
-WORKTREES_DIR = Path(".worktrees")
 DONE_MARKER = "DONE"
 
 
@@ -136,18 +135,29 @@ def compute_batches(tasks: list[Task], max_batch: int = 5) -> list[list[str]]:
 
 
 def create_worktree(task_id: str, base_branch: str = "main") -> Path:
-    worktree_path = WORKTREES_DIR / task_id
+    git_root = get_git_root()
+    worktree_path = git_root / ".worktrees" / task_id
     branch_name = f"feat/{task_id}"
 
     if worktree_path.exists():
         print(f"  Worktree {worktree_path} already exists, removing...")
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
-                        capture_output=True)
+                        capture_output=True, text=True, cwd=str(git_root))
 
-    subprocess.run(["git", "worktree", "add", str(worktree_path), "-b", branch_name, base_branch],
-                    check=True, capture_output=True)
+    result = subprocess.run(
+        ["git", "branch", "-D", branch_name],
+        capture_output=True, text=True, cwd=str(git_root),
+    )
 
-    opencode_dir = Path(".opencode")
+    result = subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "-b", branch_name, base_branch],
+        capture_output=True, text=True, cwd=str(git_root),
+    )
+    if result.returncode != 0:
+        print(f"  git worktree add failed: {result.stderr.strip()}", file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
+
+    opencode_dir = git_root / ".opencode"
     if opencode_dir.exists():
         dest = worktree_path / ".opencode"
         if dest.exists():
@@ -158,12 +168,13 @@ def create_worktree(task_id: str, base_branch: str = "main") -> Path:
 
 
 def remove_worktree(task_id: str) -> None:
-    worktree_path = WORKTREES_DIR / task_id
+    git_root = get_git_root()
+    worktree_path = git_root / ".worktrees" / task_id
     if worktree_path.exists():
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
-                        capture_output=True)
+                        capture_output=True, cwd=str(git_root))
         subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
-                        capture_output=True)
+                        capture_output=True, cwd=str(git_root))
 
 
 def build_task_prompt(task: Task) -> str:
@@ -340,8 +351,9 @@ def main():
     git_root = get_git_root()
     os.chdir(git_root)
 
-    if WORKTREES_DIR.exists():
-        for wt in WORKTREES_DIR.iterdir():
+    worktrees_dir = git_root / ".worktrees"
+    if worktrees_dir.exists():
+        for wt in worktrees_dir.iterdir():
             if wt.is_dir():
                 task_id = wt.name
                 print(f"  Removing existing worktree: {task_id}")
@@ -350,7 +362,7 @@ def main():
                 subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
                                 capture_output=True)
     else:
-        WORKTREES_DIR.mkdir(parents=True, exist_ok=True)
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     all_results: list[DispatchResult] = []
 
