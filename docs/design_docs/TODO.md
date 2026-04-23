@@ -11,13 +11,13 @@ Items marked **CRITICAL PATH** block later work if they slip. Items marked **PAR
 Set up before touching any workflow code.
 
 - [x] **Install Godot 4.x stable** and confirm `godot --headless --version` works from the shell. (0.5h)
-- [ ] **Install gdUnit4** as a Godot addon in a throwaway test project, confirm `godot --headless -s addons/gdUnit4/bin/GdUnitCmdTool.gd -a test/` produces output. (1h)
-- [ ] **Set up a Z.ai API account** (or OpenRouter account with GLM-5.1 access). Store the key in `.env`, not in repo. (0.5h)
-- [ ] **Create a Discord server** for the workflow. Create application and bot in the Discord Developer Portal. Invite bot to the server with the `bot` and `applications.commands` scopes. Store token in `.env`. (1h)
-- [ ] **Create channels**: `#orchestrator` for status, `#features` for per-feature threads, `#milestones` for announcements. (0.25h)
-- [x] **Install OpenCode** (binary or `npm i -g opencode-ai`), confirm `opencode --version` works and `opencode serve` starts cleanly. Confirm it can call GLM-5.1 via Z.ai or OpenRouter. (0.5h)
-- [ ] **Install Docker and Docker Compose**, confirm both work. (0.5h)
-- [ ] **Create a throwaway Godot project** (`sandbox/`) for testing the workflow. Will be used end-to-end for validation. (0.5h)
+- [x] **Install gdUnit4** as a Godot addon in a throwaway test project, confirm `godot --path sandbox/ -s addons/gdUnit4/bin/GdUnitCmdTool.gd -a test/ --ignoreHeadlessMode` produces output. (1h)
+- [x] **Set up an OpenCode Go subscription** at https://opencode.ai/auth. Subscribe to Go, copy your API key, store it in `.env` as `OPENCODE_GO_API_KEY`. Confirm that `opencode` can use model `opencode-go/glm-5.1` via the Go provider. (0.5h)
+- [x] **Create a Discord server** for the workflow. Create application and bot in the Discord Developer Portal. Invite bot to the server with the `bot` and `applications.commands` scopes. Store token in `.env`. (1h)
+- [x] **Create channels**: `#orchestrator` for status, `#features` for per-feature threads, `#milestones` for announcements. (0.25h)
+- [x] **Install OpenCode** (binary or `npm i -g opencode-ai`), confirm `opencode --version` works and `opencode serve` starts cleanly. Confirm it can call GLM-5.1 via OpenCode Go (`opencode-go/glm-5.1`). (0.5h)
+- [x] **Install Docker and Docker Compose**, confirm both work. (0.5h)
+- [x] **Create a throwaway Godot project** (`sandbox/`) for testing the workflow. Will be used end-to-end for validation. (0.5h)
 
 Total: ~4.5 hours.
 
