@@ -11,15 +11,15 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 **Core principle:** Fresh subagent per task + two-stage review (spec then quality) = high quality, fast iteration
 
+## Automated Session Context
+
+You are running in an automated session inside a worktree created by the orchestrator. Do NOT create a new worktree or branch — you are already in the right place. Do NOT use the using-git-worktrees skill.
+
+All questions should go through the `clarify-via-discord` skill — no human is chatting with you directly.
+
 ## When to Use
 
-Use this skill when you have an implementation plan with tasks that are mostly independent, and you want to stay in the current session.
-
-**vs. Executing Plans (sequential execution):**
-- Same session (no context switch)
-- Fresh subagent per task (no context pollution)
-- Two-stage review after each task: spec compliance first, then code quality
-- Faster iteration (no human-in-loop between tasks)
+Use this skill when you have an implementation plan with tasks that are mostly independent.
 
 ## The Process
 
@@ -34,7 +34,7 @@ Use this skill when you have an implementation plan with tasks that are mostly i
    g. If code quality reviewer finds issues — Implementer fixes, re-review
    h. Mark task complete
 3. **After all tasks** — Dispatch final code reviewer for entire implementation
-4. **Use finishing-a-development-branch** to complete the work
+4. **Create DONE file** — Create a `DONE` marker file in the worktree root with a brief summary of what was implemented
 
 ## Model Selection
 
@@ -60,7 +60,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 1. If it's a context problem, provide more context and re-dispatch with the same model
 2. If the task requires more reasoning, re-dispatch with a more capable model
 3. If the task is too large, break it into smaller pieces
-4. If the plan itself is wrong, escalate to the human
+4. If the plan itself is wrong, ask the developer via the `clarify-via-discord` skill
 
 **Never** ignore an escalation or force the same model to retry without changes.
 
@@ -109,6 +109,7 @@ Code reviewer: Strengths: Good test coverage, clean. Issues: None. Approved.
 [Dispatch final code-reviewer]
 Final reviewer: All requirements met, ready to merge
 
+[Create DONE file with summary]
 Done!
 ```
 
@@ -120,11 +121,6 @@ Done!
 - Parallel-safe (subagents don't interfere)
 - Subagent can ask questions (before AND during work)
 
-**vs. Executing Plans:**
-- Same session (no handoff)
-- Continuous progress (no waiting)
-- Review checkpoints automatic
-
 **Quality gates:**
 - Self-review catches issues before handoff
 - Two-stage review: spec compliance, then code quality
@@ -135,7 +131,6 @@ Done!
 ## Red Flags
 
 **Never:**
-- Start implementation on main/master branch without explicit user consent
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed issues
 - Dispatch multiple implementation subagents in parallel (conflicts)
@@ -166,13 +161,9 @@ Done!
 ## Integration
 
 **Required workflow skills:**
-- **using-git-worktrees** - REQUIRED: Set up isolated workspace before starting
+- **brainstorming** - Creates the design that leads to the plan
 - **writing-plans** - Creates the plan this skill executes
-- **requesting-code-review** - Code review template for reviewer subagents
-- **finishing-a-development-branch** - Complete development after all tasks
+- **clarify-via-discord** - Ask the developer questions when blocked or uncertain
 
 **Subagents should use:**
 - **test-driven-development** - Subagents follow TDD for each task
-
-**Alternative workflow:**
-- **executing-plans** - Use for parallel session instead of same-session execution

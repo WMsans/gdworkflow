@@ -1,18 +1,20 @@
 # Clarify via Discord
 
-Use this skill when you need to ask the human developer a clarifying question during task execution.
+Use this skill to ask the human developer a clarifying question during task execution. Ask early and often — a wrong assumption wastes far more time than a question.
 
 ## When to use
+
+**Ask a question whenever:**
 
 - You are unsure about a design decision that affects the feature's behavior
 - You need clarification on requirements that are ambiguous in the task description
 - You need additional context about the game design that isn't provided in the TODO
-
-## When NOT to use
-
-- You can make a reasonable default decision (prefer doing so and noting it in a comment)
-- The question is about tool usage or Godot engine mechanics (look it up instead)
-- The answer can be inferred from the GDD or existing code
+- The task description contains question marks or unresolved choices
+- You need to decide between two or more reasonable approaches
+- A signal, method, or node name is ambiguous
+- The task references something that does not exist yet (e.g., a node, a script, a signal)
+- You are unsure what format, type, or value to use
+- Anything is unclear — err on the side of asking rather than guessing
 
 ## How to use
 
@@ -32,6 +34,13 @@ Where:
 4. Check the output:
    - If `"status": "answered"`, the `answer` field contains the developer's response.
    - If `"status": "paused"`, the question timed out. You must checkpoint your work, commit changes so far, create a `DONE` marker file, and exit cleanly. The orchestrator will handle re-dispatch.
+
+## How to ask well
+
+- **One question at a time** — ask, wait for the answer, then ask the next if needed
+- **Prefer multiple choice** when possible — e.g., "Should the label show 'Score: 0' or just '0'?"
+- **Be specific** — e.g., "Should coins respawn after being collected, or are they one-time pickups?" not "How should coins work?"
+- **Include context** — briefly mention what you're deciding between and why
 
 ## Timeout behavior
 
