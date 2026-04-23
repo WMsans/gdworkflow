@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -40,6 +41,17 @@ class DispatchResult:
     stdout: str
     stderr: str
     duration: float
+    token_usage: dict = field(default_factory=dict)
+
+
+@dataclass
+class CostRecord:
+    task_id: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    model: str = ""
+    duration: float = 0.0
 
 
 def parse_todo(path: Path) -> list[Task]:
@@ -100,10 +112,47 @@ def build_dag(tasks: list[Task]) -> dict[str, list[str]]:
     return adjacency
 
 
+def detect_cycle(tasks: list[Task]) -> list[str] | None:
+    adjacency = {}
+    for t in tasks:
+        adjacency[t.id] = t.depends_on
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {nid: WHITE for nid in adjacency}
+    cycle_members: set[str] = set()
+
+    def dfs(node: str, path: list[str]):
+        color[node] = GRAY
+        path.append(node)
+        for neighbor in adjacency.get(node, []):
+            if neighbor not in color:
+                continue
+            if color[neighbor] == GRAY:
+                cycle_start = path.index(neighbor)
+                for n in path[cycle_start:]:
+                    cycle_members.add(n)
+            elif color[neighbor] == WHITE:
+                dfs(neighbor, path)
+        color[node] = BLACK
+        path.pop()
+
+    for nid in adjacency:
+        if color[nid] == WHITE:
+            dfs(nid, [])
+
+    if cycle_members:
+        return sorted(cycle_members)
+    return None
+
+
 def compute_batches(tasks: list[Task], max_batch: int = 5) -> list[list[str]]:
+    cycle = detect_cycle(tasks)
+    if cycle:
+        print(f"ERROR: Dependency cycle detected among: {', '.join(cycle)}", file=sys.stderr)
+        return []
+
     task_map = {t.id: t for t in tasks}
     in_degree: dict[str, int] = {t.id: 0 for t in tasks}
-    adjacency = build_dag(tasks)
 
     for t in tasks:
         for dep in t.depends_on:
@@ -121,8 +170,7 @@ def compute_batches(tasks: list[Task], max_batch: int = 5) -> list[list[str]]:
                 ready.append(tid)
 
         if not ready:
-            cycle_members = sorted(remaining)
-            print(f"ERROR: Dependency cycle detected among: {', '.join(cycle_members)}", file=sys.stderr)
+            print(f"ERROR: Could not resolve dependencies for: {', '.join(sorted(remaining))}", file=sys.stderr)
             break
 
         batch = ready[:max_batch]
@@ -215,6 +263,32 @@ def build_task_prompt(task: Task) -> str:
     parts.append(task.prose)
 
     parts.append("")
+    parts.append("## Non-Interactive Execution")
+    parts.append("You are running in an automated session. No human is chatting with you directly.")
+    parts.append("- Do NOT load or use skills that require user interaction or approval (e.g., brainstorming, using-superpowers). Skip them entirely.")
+    parts.append("- Do NOT present a design and wait for approval. Implement directly.")
+    parts.append("- Proceed immediately to implementation after exploring the project structure.")
+    parts.append("")
+    parts.append("## Clarifying Questions — ASK EARLY AND OFTEN")
+    parts.append("ANY time you are unsure about a requirement, a naming convention, a value, a design choice, or ANY detail — ASK. Do NOT guess. Do NOT assume. A wrong assumption wastes far more time than a question.")
+    parts.append("Ask via the Discord bot:")
+    parts.append("  curl -s -X POST http://localhost:8080/post_question \\")
+    parts.append('    -H "Content-Type: application/json" \\')
+    parts.append("    -d '{")
+    parts.append('      "agent_id": "<YOUR_TASK_ID>",')
+    parts.append('      "feature": "<YOUR_FEATURE_NAME>",')
+    parts.append('      "question": "<YOUR_QUESTION>",')
+    parts.append('      "timeout": 300')
+    parts.append("    }'")
+    parts.append("This will block until a developer answers (up to 300s), then you can continue with certainty.")
+    parts.append("Examples of when you MUST ask:")
+    parts.append("- The task description contains any question marks or unresolved choices")
+    parts.append("- You are unsure what format, type, or value to use")
+    parts.append("- A signal, method, or node name is ambiguous")
+    parts.append("- You need to decide between two or more reasonable approaches")
+    parts.append("- The task references something that does not exist yet (e.g., a node, a script, a signal)")
+    parts.append("Ask ONE question at a time. Wait for the answer. Then proceed or ask the next question.")
+    parts.append("")
     parts.append("## Rules")
     parts.append("- Create your scene as a NEW scene file. Do NOT modify existing scenes.")
     parts.append("- Commit frequently with descriptive messages.")
@@ -222,6 +296,52 @@ def build_task_prompt(task: Task) -> str:
     parts.append("- This is a Godot 4.x project using GDScript.")
 
     return "\n".join(parts)
+
+
+def _parse_token_usage(output: str) -> dict:
+    try:
+        data = json.loads(output)
+        if isinstance(data, dict):
+            usage = data.get("usage", {})
+            return {
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            }
+        if isinstance(data, list):
+            total_prompt = 0
+            total_completion = 0
+            total_total = 0
+            for item in data:
+                if isinstance(item, dict):
+                    u = item.get("usage", {})
+                    total_prompt += u.get("prompt_tokens", 0)
+                    total_completion += u.get("completion_tokens", 0)
+                    total_total += u.get("total_tokens", 0)
+            return {"prompt_tokens": total_prompt, "completion_tokens": total_completion, "total_tokens": total_total}
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def _write_agent_log(worktree: Path, task_id: str, stdout: str, stderr: str,
+                     exit_code: int, duration: float, token_usage: dict) -> None:
+    log_path = worktree / "agent.log"
+    lines = [
+        f"=== Agent Log: {task_id} ===",
+        f"Exit code: {exit_code}",
+        f"Duration: {duration:.1f}s",
+        f"Token usage: prompt={token_usage.get('prompt_tokens', 0)}, "
+        f"completion={token_usage.get('completion_tokens', 0)}, "
+        f"total={token_usage.get('total_tokens', 0)}",
+        "",
+        "=== STDOUT ===",
+        stdout,
+        "",
+        "=== STDERR ===",
+        stderr,
+    ]
+    log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def dispatch_subagent(task: Task, worktree: Path, model: str = "opencode-go/glm-5.1",
@@ -251,24 +371,33 @@ def dispatch_subagent(task: Task, worktree: Path, model: str = "opencode-go/glm-
             env={**os.environ, "PATH": os.environ.get("PATH", "")},
         )
         duration = time.time() - start
-        return DispatchResult(
+        token_usage = _parse_token_usage(result.stdout)
+        dr = DispatchResult(
             task_id=task.id,
             worktree=worktree,
             exit_code=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
             duration=duration,
+            token_usage=token_usage,
         )
+        _write_agent_log(worktree, task.id, result.stdout, result.stderr,
+                         result.returncode, duration, token_usage)
+        return dr
     except subprocess.TimeoutExpired:
         duration = time.time() - start
-        return DispatchResult(
+        dr = DispatchResult(
             task_id=task.id,
             worktree=worktree,
             exit_code=-1,
             stdout="",
             stderr=f"Subagent timed out after {timeout}s",
             duration=duration,
+            token_usage={},
         )
+        _write_agent_log(worktree, task.id, "", f"Subagent timed out after {timeout}s",
+                         -1, duration, {})
+        return dr
 
 
 def poll_done_file(worktree: Path, task_id: str, poll_interval: float = 10.0,
@@ -296,6 +425,56 @@ def post_update_to_discord(channel: str, message: str, bot_url: str = "http://lo
         return False
 
 
+def post_cost_summary(cost_records: list[CostRecord], bot_url: str) -> bool:
+    total_prompt = sum(r.prompt_tokens for r in cost_records)
+    total_completion = sum(r.completion_tokens for r in cost_records)
+    total_tokens = sum(r.total_tokens for r in cost_records)
+    lines = [
+        "**Cost Summary**",
+        f"Total tasks: {len(cost_records)}",
+        f"Prompt tokens: {total_prompt:,}",
+        f"Completion tokens: {total_completion:,}",
+        f"Total tokens: {total_tokens:,}",
+        "",
+    ]
+    for r in cost_records:
+        lines.append(f"  {r.task_id}: {r.total_tokens:,} tokens ({r.duration:.0f}s)")
+    return post_update_to_discord("orchestrator", "\n".join(lines), bot_url)
+
+
+async def _dispatch_task_async(task: Task, worktree: Path, model: str,
+                                timeout: int, loop: asyncio.AbstractEventLoop) -> DispatchResult:
+    def _run():
+        return dispatch_subagent(task, worktree, model, timeout)
+    return await loop.run_in_executor(None, _run)
+
+
+async def _run_batch_async(batch: list[str], task_map: dict[str, Task],
+                            model: str, timeout: int, base_branch: str,
+                            bot_url: str, no_discord: bool) -> list[DispatchResult]:
+    loop = asyncio.get_event_loop()
+    coros = []
+    for tid in batch:
+        task = task_map[tid]
+        worktree = create_worktree(task.id, base_branch)
+        if not no_discord:
+            post_update_to_discord("features", f"**{task.id}**: Starting — {task.feature_name}", bot_url)
+        coros.append(_dispatch_task_async(task, worktree, model, timeout, loop))
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    dispatch_results: list[DispatchResult] = []
+    for i, r in enumerate(results):
+        tid = batch[i]
+        task = task_map[tid]
+        if isinstance(r, Exception):
+            worktree = Path(get_git_root()) / ".worktrees" / tid
+            dr = DispatchResult(task_id=tid, worktree=worktree, exit_code=-1,
+                                stdout="", stderr=str(r), duration=0.0)
+            dispatch_results.append(dr)
+        else:
+            dispatch_results.append(r)
+    return dispatch_results
+
+
 def get_git_root() -> Path:
     result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -320,6 +499,8 @@ def main():
                         help="Discord bot HTTP URL (default: http://localhost:8080)")
     parser.add_argument("--no-discord", action="store_true",
                         help="Skip Discord updates (for testing)")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Run tasks sequentially within each batch instead of in parallel")
     args = parser.parse_args()
 
     todo_path = Path(args.todo_file)
@@ -335,7 +516,16 @@ def main():
     print(f"Found {len(tasks)} tasks in {todo_path}")
     task_map = {t.id: t for t in tasks}
 
+    cycle = detect_cycle(tasks)
+    if cycle:
+        print(f"ERROR: Dependency cycle detected among: {', '.join(cycle)}", file=sys.stderr)
+        sys.exit(1)
+
     batches = compute_batches(tasks, args.max_batch)
+    if not batches:
+        print("ERROR: Could not compute batches (possible unresolved dependencies)", file=sys.stderr)
+        sys.exit(1)
+
     print(f"\nDispatch plan ({len(batches)} batches):")
     for i, batch in enumerate(batches):
         batch_tasks = [task_map[tid] for tid in batch]
@@ -365,6 +555,8 @@ def main():
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     all_results: list[DispatchResult] = []
+    cost_records: list[CostRecord] = []
+    failed_permanently: set[str] = set()
 
     for i, batch in enumerate(batches):
         print(f"\n{'='*60}")
@@ -378,53 +570,68 @@ def main():
                 args.bot_url,
             )
 
-        batch_results: list[DispatchResult] = []
+        if args.sequential:
+            batch_results: list[DispatchResult] = []
+            for tid in batch:
+                task = task_map[tid]
+                print(f"\n--- Dispatching: {task.id} ({task.feature_name}) ---")
+                worktree = create_worktree(task.id, args.base_branch)
+                print(f"  Worktree: {worktree}")
+                if not args.no_discord:
+                    post_update_to_discord("features", f"**{task.id}**: Starting — {task.feature_name}", args.bot_url)
+                result = dispatch_subagent(task, worktree, args.model, args.timeout)
+                batch_results.append(result)
+        else:
+            print(f"\n--- Dispatching {len(batch)} tasks in parallel ---")
+            batch_results = asyncio.run(
+                _run_batch_async(batch, task_map, args.model, args.timeout,
+                                 args.base_branch, args.bot_url, args.no_discord)
+            )
 
-        for tid in batch:
-            task = task_map[tid]
-            print(f"\n--- Dispatching: {task.id} ({task.feature_name}) ---")
-
-            worktree = create_worktree(task.id, args.base_branch)
-            print(f"  Worktree: {worktree}")
-
-            if not args.no_discord:
-                post_update_to_discord(
-                    "features",
-                    f"**{task.id}**: Starting — {task.feature_name}",
-                    args.bot_url,
-                )
-
-            result = dispatch_subagent(task, worktree, args.model, args.timeout)
-            batch_results.append(result)
-
-            done_file = worktree / DONE_MARKER
+        for result in batch_results:
+            done_file = result.worktree / DONE_MARKER
             if result.exit_code == 0 and done_file.exists():
                 status = "COMPLETED"
             elif result.exit_code == 0:
                 status = "NO_DONE_FILE"
-                print(f"  WARNING: Subagent exited cleanly but no DONE marker found")
+                print(f"  WARNING: {result.task_id} exited cleanly but no DONE marker found")
             elif result.exit_code == -1:
                 status = "TIMEOUT"
             else:
                 status = f"FAILED (exit code {result.exit_code})"
 
-            print(f"  Status: {status}")
-            print(f"  Duration: {result.duration:.1f}s")
+            print(f"  {result.task_id}: {status} (took {result.duration:.1f}s)")
 
             if not args.no_discord:
                 post_update_to_discord(
                     "features",
-                    f"**{task.id}**: {status} (took {result.duration:.0f}s)",
+                    f"**{result.task_id}**: {status} (took {result.duration:.0f}s)",
                     args.bot_url,
                 )
 
+            tu = result.token_usage
+            cost_records.append(CostRecord(
+                task_id=result.task_id,
+                prompt_tokens=tu.get("prompt_tokens", 0),
+                completion_tokens=tu.get("completion_tokens", 0),
+                total_tokens=tu.get("total_tokens", 0),
+                model=args.model,
+                duration=result.duration,
+            ))
+
+            if status != "COMPLETED":
+                failed_permanently.add(result.task_id)
+
         all_results.extend(batch_results)
 
-        failed = [r for r in batch_results if r.exit_code != 0]
-        if failed:
-            for r in failed:
+        failed_in_batch = [r for r in batch_results if r.exit_code != 0 or not (r.worktree / DONE_MARKER).exists()]
+        if failed_in_batch:
+            for r in failed_in_batch:
                 print(f"\n  FAILED: {r.task_id}")
                 print(f"    stderr: {r.stderr[:500]}")
+
+        completed_in_batch = [r for r in batch_results if r.exit_code == 0 and (r.worktree / DONE_MARKER).exists()]
+        print(f"\nBatch {i + 1} complete: {len(completed_in_batch)} succeeded, {len(failed_in_batch)} failed")
 
     print(f"\n{'='*60}")
     print("Workflow complete!")
@@ -441,6 +648,12 @@ def main():
         print(f"\n  Failed: {len(failed)}")
         for r in failed:
             print(f"    - {r.task_id} (exit: {r.exit_code})")
+
+    if cost_records:
+        if not args.no_discord:
+            post_cost_summary(cost_records, args.bot_url)
+        total_tokens = sum(r.total_tokens for r in cost_records)
+        print(f"\n  Total tokens used: {total_tokens:,}")
 
     if not args.no_discord:
         summary_lines = [f"Workflow finished: {len(completed)} completed, {len(failed)} failed"]

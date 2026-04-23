@@ -52,7 +52,7 @@ Goal by end of week: you can hand-craft a TODO, run the orchestrator, and it dis
 
 ### End-of-week integration test
 
-- [ ] **Run the full Week 1 pipeline**: hand-craft a trivial TODO ("create a scene with a red square"), run orchestrator, confirm worktree created, `opencode serve` starts, subagent runs, completion detected, update posted to Discord. (2h)
+- [x] **Run the full Week 1 pipeline**: hand-craft a trivial TODO ("create a scene with a red square"), run orchestrator, confirm worktree created, `opencode serve` starts, subagent runs, completion detected, update posted to Discord. (2h)
 
 Total: ~26 hours. This is a full week if you're not also doing day-job work.
 
@@ -64,35 +64,35 @@ Goal by end of week: 3 subagents run in parallel on different tasks, can ask cla
 
 ### Parallelism in the orchestrator **CRITICAL PATH**
 
-- [ ] **Implement DAG construction** from `depends_on` fields. Validate no cycles. (2h)
-- [ ] **Implement batch computation**: topologically sort, group independent tasks, cap each batch at 5. (2h)
-- [ ] **Implement concurrent subagent dispatch** within a batch: start one `opencode serve` process per worktree concurrently, POST each task prompt, and track completion via DONE file polling. Use goroutines/channels (Go) or asyncio (Python) in the orchestrator script. (3h)
-- [ ] **Implement batch-wait semantics**: orchestrator advances to next batch only when all tasks in current batch complete or permanently fail. (2h)
-- [ ] **Add per-agent logging** that captures stdout/stderr to `.worktrees/<task-id>/agent.log`. (1h)
-- [ ] **Add a cost tracker** that sums token usage across all agents and reports to Discord at milestone end. (2h)
+- [x] **Implement DAG construction** from `depends_on` fields. Validate no cycles. (2h)
+- [x] **Implement batch computation**: topologically sort, group independent tasks, cap each batch at 5. (2h)
+- [x] **Implement concurrent subagent dispatch** within a batch: start one `opencode serve` process per worktree concurrently, POST each task prompt, and track completion via DONE file polling. Use goroutines/channels (Go) or asyncio (Python) in the orchestrator script. (3h)
+- [x] **Implement batch-wait semantics**: orchestrator advances to next batch only when all tasks in current batch complete or permanently fail. (2h)
+- [x] **Add per-agent logging** that captures stdout/stderr to `.worktrees/<task-id>/agent.log`. (1h)
+- [x] **Add a cost tracker** that sums token usage across all agents and reports to Discord at milestone end. (2h)
 
 ### Clarifying question flow **CRITICAL PATH**
 
-- [ ] **Implement `post_question` endpoint** in Discord bot: POST `{agent_id, feature, question}` creates a thread and blocks the HTTP response until an answer arrives. (4h — this is the trickiest concurrency in the bot)
-- [ ] **Implement answer capture**: thread message from developer → resolve the blocking request. Also handle `/answer <feature> <text>` slash command as fallback. (2h)
-- [ ] **Implement per-request timeout** with pause semantics: on timeout, return a `PAUSED` sentinel; agent checkpoints and exits. (2h)
-- [ ] **Write the `clarify-via-discord` skill**: a SKILL.md file in `.opencode/skills/` plus a companion shell script that POSTs to the Discord bot's `post_question` endpoint and blocks for the response. The skill invokes the shell script via the `bash` tool. (2h)
+- [x] **Implement `post_question` endpoint** in Discord bot: POST `{agent_id, feature, question}` creates a thread and blocks the HTTP response until an answer arrives. (4h — this is the trickiest concurrency in the bot)
+- [x] **Implement answer capture**: thread message from developer → resolve the blocking request. Also handle `/answer <feature> <text>` slash command as fallback. (2h)
+- [x] **Implement per-request timeout** with pause semantics: on timeout, return a `PAUSED` sentinel; agent checkpoints and exits. (2h)
+- [x] **Write the `clarify-via-discord` skill**: a SKILL.md file in `.opencode/skills/` plus a companion shell script that POSTs to the Discord bot's `post_question` endpoint and blocks for the response. The skill invokes the shell script via the `bash` tool. (2h)
 - [ ] **Test with a toy agent** that deliberately asks a question, confirm the whole round-trip works. (1.5h)
 
 ### Superpowers port **PARALLELIZABLE**
 
-- [ ] **Clone `obra/superpowers`**, read every SKILL.md, classify each as (a) drop in as-is (OpenCode reads `.claude/skills/` natively), (b) port with edits (rewrite Claude-Code-specific tool references), (c) skip. (3h)
-- [ ] **Drop the "as-is" skills** into `.opencode/skills/` (or symlink `.claude/skills/`). Expect 5–8 skills. (1h)
-- [ ] **Port the "port with edits" skills**, rewriting tool references to match OpenCode's available tools and permission model. (3h)
-- [ ] **Write a new skill** `gdscript-conventions.md` covering Godot-specific norms (signals over polling, composition via scene instancing, no `get_node` string paths when a `@export` works). (1.5h)
-- [ ] **Write a new skill** `scene-isolation.md` that reminds every subagent of the "new scene, never touch existing scenes" rule. (1h)
+- [x] **Clone `obra/superpowers`**, read every SKILL.md, classify each as (a) drop in as-is (OpenCode reads `.claude/skills/` natively), (b) port with edits (rewrite Claude-Code-specific tool references), (c) skip. (3h)
+- [x] **Drop the "as-is" skills** into `.opencode/skills/` (or symlink `.claude/skills/`). Expect 5–8 skills. (1h)
+- [x] **Port the "port with edits" skills**, rewriting tool references to match OpenCode's available tools and permission model. (3h)
+- [x] **Write a new skill** `gdscript-conventions.md` covering Godot-specific norms (signals over polling, composition via scene instancing, no `get_node` string paths when a `@export` works). (1.5h)
+- [x] **Write a new skill** `scene-isolation.md` that reminds every subagent of the "new scene, never touch existing scenes" rule. (1h)
 - [ ] **Test each ported skill** on a toy task to verify GLM-5.1 interprets it correctly. (2h)
 
 ### Subagent agent config and harness
 
-- [ ] **Write `.opencode/agents/subagent.md`**: agent definition covering scene-isolation rule, plan-summary-within-5-minutes requirement, commit-frequently rule, permission settings (`bash: allow`, `edit: allow`, `webfetch: deny`), and skill list. (2h)
+- [x] **Write `.opencode/agents/subagent.md`**: agent definition covering scene-isolation rule, plan-summary-within-5-minutes requirement, commit-frequently rule, permission settings (`bash: allow`, `edit: allow`, `webfetch: deny`), and skill list. (2h)
 - [ ] **Verify skill loading**: confirm that OpenCode loads all skills from `.opencode/skills/` when the subagent config is active. Run a toy task that deliberately invokes one skill. (1h)
-- [ ] **Implement commit-frequency enforcement**: either via a skill that reminds the agent, or a wrapper that commits on file changes with a generic message. (2h)
+- [x] **Implement commit-frequency enforcement**: either via a skill that reminds the agent, or a wrapper that commits on file changes with a generic message. (2h)
 
 ### End-of-week integration test
 

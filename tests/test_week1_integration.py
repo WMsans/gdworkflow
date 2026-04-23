@@ -126,7 +126,7 @@ class TestWeek1Integration(unittest.TestCase):
         bot = create_bot(cfg)
         self.assertIsInstance(bot, DiscordBot)
 
-        app = create_http_app(bot)
+        app = create_http_app(bot, cfg)
         self.assertIsNotNone(app)
         paths = [r.resource.canonical for r in app.router.routes()]
         self.assertIn("/health", paths)
