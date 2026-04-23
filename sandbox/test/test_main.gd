@@ -8,7 +8,7 @@ func before_test() -> void:
 	add_child(_main_scene)
 
 func test_main_scene_loads() -> void:
-	assert_not_null(_main_scene, "Main scene should load without errors")
+	assert_object(_main_scene).is_not_null()
 
 func test_main_scene_is_node2d() -> void:
 	assert_bool(_main_scene is Node2D).is_true()
