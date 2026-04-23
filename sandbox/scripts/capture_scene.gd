@@ -1,3 +1,4 @@
+@tool
 extends SceneTree
 
 var scene_path: String = ""
@@ -6,7 +7,6 @@ var frames_to_wait: int = 10
 var viewport_size: Vector2i = Vector2i(800, 600)
 var _scene_instance: Node = null
 var _frame_count: int = 0
-var _initialized: bool = false
 
 func _initialize() -> void:
 	for arg in OS.get_cmdline_args():
@@ -28,29 +28,24 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	if not ResourceLoader.exists(scene_path):
-		push_error("capture_scene: Scene not found: " + scene_path)
-		quit(1)
-		return
+func _iteration(delta: float) -> bool:
+	if _scene_instance == null and scene_path != "":
+		if not ResourceLoader.exists(scene_path):
+			push_error("capture_scene: Scene not found: " + scene_path)
+			quit(1)
+			return true
 
-	var scene_res = load(scene_path)
-	if scene_res == null:
-		push_error("capture_scene: Failed to load scene: " + scene_path)
-		quit(1)
-		return
+		var scene_res = load(scene_path)
+		if scene_res == null:
+			push_error("capture_scene: Failed to load scene: " + scene_path)
+			quit(1)
+			return true
 
-	_scene_instance = scene_res.instantiate()
-	get_root().add_child(_scene_instance)
+		_scene_instance = scene_res.instantiate()
+		get_root().add_child(_scene_instance)
 
-	var camera = _find_or_create_camera(_scene_instance)
-	camera.make_current()
-
-	_initialized = true
-	print("capture_scene: Scene loaded, waiting ", frames_to_wait, " frames before capture...")
-
-func _process(delta: float) -> void:
-	if not _initialized:
-		return
+		var camera = _find_or_create_camera(_scene_instance)
+		camera.make_current()
 
 	_frame_count += 1
 
@@ -58,6 +53,8 @@ func _process(delta: float) -> void:
 		_capture_screenshot()
 		_cleanup()
 		quit(0)
+
+	return false
 
 func _find_or_create_camera(node: Node) -> Camera2D:
 	var existing = _find_camera_in_tree(node)

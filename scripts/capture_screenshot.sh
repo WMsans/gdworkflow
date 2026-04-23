@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# capture_screenshot.sh — Run Godot headlessly to capture a screenshot of a scene.
+# capture_screenshot.sh — Run Godot to capture a screenshot of a scene.
+#
+# IMPORTANT: Screenshots require an active renderer, so this script does NOT use
+# --headless. On headless CI, use xvfb-run or similar to provide a virtual display.
 #
 # Usage:
 #   ./scripts/capture_screenshot.sh --scene <scene_path> [--output <path>] [--frames <N>] [--project-dir <path>] [--godot-bin <path>]
@@ -88,7 +91,7 @@ echo "  Output:     ${OUTPUT_PATH}"
 echo "  Frames:     ${FRAMES}"
 echo "  Project:    ${PROJECT_DIR}"
 
-"$GODOT_BIN" --headless --path "${PROJECT_DIR}" \
+"$GODOT_BIN" --path "${PROJECT_DIR}" \
     -s "${SCRIPT_PATH}" \
     --scene-path="${SCENE_PATH}" \
     --output-path="${OUTPUT_PATH}" \
