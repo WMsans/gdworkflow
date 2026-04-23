@@ -1,0 +1,22 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - .worktrees:/app/.worktrees
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    depends_on:
+      - bot
+    env_file: .env
+    volumes:
+      - .worktrees:/app/.worktrees
+      - .:/workspace
+    working_dir: /workspace

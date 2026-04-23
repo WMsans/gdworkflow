@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TODO Task Frontmatter",
+  "description": "Schema for a single task's YAML frontmatter in a TODO.md file",
+  "type": "object",
+  "required": ["id", "feature_name", "new_scene_path", "integration_parent", "depends_on"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^feat-[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Unique task identifier, e.g. feat-player-dash"
+    },
+    "feature_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable feature name"
+    },
+    "new_scene_path": {
+      "type": "string",
+      "pattern": "^scenes/features/[a-z0-9_]+\\.tscn$",
+      "description": "Path where the new feature scene will be created"
+    },
+    "integration_parent": {
+      "type": "string",
+      "description": "Path to the parent .tscn file this feature integrates into"
+    },
+    "integration_hints": {
+      "type": "object",
+      "description": "Hints for the merger agent on how to integrate this scene",
+      "properties": {
+        "node_type": {
+          "type": "string",
+          "enum": ["instance", "script_attach"],
+          "default": "instance",
+          "description": "How to add the feature: as a scene instance or by attaching a script"
+        },
+        "position": {
+          "type": "string",
+          "description": "Where to place the instance in the parent tree, e.g. as_child_of_root"
+        },
+        "signals_to_connect": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "signal", "to", "method"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "Source node path"
+              },
+              "signal": {
+                "type": "string",
+                "description": "Signal name on source"
+              },
+              "to": {
+                "type": "string",
+                "description": "Target node path"
+              },
+              "method": {
+                "type": "string",
+                "description": "Method name on target"
+              }
+            }
+          },
+          "default": []
+        },
+        "autoload": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to register this feature as an autoload in project.godot"
+        }
+      }
+    },
+    "touches_existing_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of existing files this task modifies. Must be empty for parallel dispatch; non-empty forces serialization."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^feat-[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "default": [],
+      "description": "IDs of tasks that must complete before this one starts"
+    },
+    "estimated_complexity": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "default": "medium",
+      "description": "Rough complexity estimate for sizing batches"
+    }
+  },
+  "additionalProperties": false
+}

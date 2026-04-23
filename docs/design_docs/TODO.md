@@ -29,26 +29,26 @@ Goal by end of week: you can hand-craft a TODO, run the orchestrator, and it dis
 
 ### GDD → TODO generator **CRITICAL PATH**
 
-- [ ] **Design the TODO schema YAML structure**, write example TODOs by hand to validate it's expressive enough. (2h)
-- [ ] **Write a JSON schema** for the TODO frontmatter. This becomes the structured output target and the validator. (1h)
-- [ ] **Write `gen-todo` CLI tool** (Python or Go, your call). Reads a GDD markdown file, sends to GLM-5.1 with schema, writes `TODO.md`. (3h)
-- [ ] **Write a TODO validator** as a standalone CLI that checks schema compliance, file existence, dependency sanity, and no-shared-parent rules. (2h)
-- [ ] **Write 3 example GDDs** of varying complexity and generate TODOs for each. Hand-revise and save as fixtures. (2h)
+- [x] **Design the TODO schema YAML structure**, write example TODOs by hand to validate it's expressive enough. (2h)
+- [x] **Write a JSON schema** for the TODO frontmatter. This becomes the structured output target and the validator. (1h)
+- [x] **Write `gen-todo` CLI tool** (Python or Go, your call). Reads a GDD markdown file, sends to GLM-5.1 with schema, writes `TODO.md`. (3h)
+- [x] **Write a TODO validator** as a standalone CLI that checks schema compliance, file existence, dependency sanity, and no-shared-parent rules. (2h)
+- [x] **Write 3 example GDDs** of varying complexity and generate TODOs for each. Hand-revise and save as fixtures. (2h)
 
 ### Orchestrator scaffold (external script + vanilla OpenCode) **CRITICAL PATH**
 
-- [ ] **Explore the OpenCode HTTP API**: start `opencode serve`, read the OpenAPI docs at `/doc`, and write a minimal test client that creates a session, posts a prompt, and reads the SSE event stream. (1.5h)
-- [ ] **Write the `orchestrate` CLI script** (Python or Go) with a skeleton that reads a TODO file via the validator from above and prints a dry-run of what would be dispatched. Include a `--dry-run` flag. (2h)
-- [ ] **Implement worktree creation**: for each task, run `git worktree add .worktrees/<task-id> -b feat/<task-id>` and copy the project-local `.opencode/` config into the new worktree. (2h)
-- [ ] **Implement single-subagent dispatch**: start `opencode serve --cwd .worktrees/<task-id>`, then POST the task description as the initial prompt via the HTTP API. Do not yet parallelize. (3h)
-- [ ] **Implement subagent completion detection**: poll for the `DONE` marker file in the worktree; on detection, gracefully shut down the `opencode serve` process. (1.5h)
+- [x] **Explore the OpenCode HTTP API**: start `opencode serve`, read the OpenAPI docs at `/doc`, and write a minimal test client that creates a session, posts a prompt, and reads the SSE event stream. (1.5h)
+- [x] **Write the `orchestrate` CLI script** (Python or Go) with a skeleton that reads a TODO file via the validator from above and prints a dry-run of what would be dispatched. Include a `--dry-run` flag. (2h)
+- [x] **Implement worktree creation**: for each task, run `git worktree add .worktrees/<task-id> -b feat/<task-id>` and copy the project-local `.opencode/` config into the new worktree. (2h)
+- [x] **Implement single-subagent dispatch**: start `opencode serve --cwd .worktrees/<task-id>`, then POST the task description as the initial prompt via the HTTP API. Do not yet parallelize. (3h)
+- [x] **Implement subagent completion detection**: poll for the `DONE` marker file in the worktree; on detection, gracefully shut down the `opencode serve` process. (1.5h)
 
 ### Minimal Discord bot **CRITICAL PATH**
 
-- [ ] **Scaffold a Go Discord bot** using `discordgo`, connect to gateway, respond to a `/ping` slash command. (2h)
-- [ ] **Implement `post_update` HTTP endpoint**: POST `{channel, message}` → posts to Discord. (1.5h)
-- [ ] **Implement `announce_milestone` endpoint**. (1h)
-- [ ] **Containerize the bot** with a Dockerfile, test it runs from `docker compose up`. (1.5h)
+- [x] **Scaffold a Go Discord bot** using `discordgo`, connect to gateway, respond to a `/ping` slash command. (2h)
+- [x] **Implement `post_update` HTTP endpoint**: POST `{channel, message}` → posts to Discord. (1.5h)
+- [x] **Implement `announce_milestone` endpoint**. (1h)
+- [x] **Containerize the bot** with a Dockerfile, test it runs from `docker compose up`. (1.5h)
 
 ### End-of-week integration test
 
