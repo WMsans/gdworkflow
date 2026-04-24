@@ -6,9 +6,12 @@ from pathlib import Path
 
 import httpx
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-DEFAULT_MODEL = "opencode-go/glm-5.1"
+DEFAULT_MODEL = "glm-5.1"
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "todo_frontmatter.json"
 
