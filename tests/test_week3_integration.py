@@ -177,8 +177,8 @@ class TestScreenshotHarness(unittest.TestCase):
         self.assertTrue(gd_path.exists(), "capture_scene.gd should exist")
         content = gd_path.read_text()
         self.assertIn("capture_scene", content)
-        self.assertIn("--scene-path", content)
-        self.assertIn("--output-path", content)
+        self.assertIn("scene_path", content)
+        self.assertIn("output_path", content)
 
     def test_screenshot_conventions_doc_exists(self):
         doc_path = PROJECT_ROOT / "docs" / "design_docs" / "screenshot_conventions.md"

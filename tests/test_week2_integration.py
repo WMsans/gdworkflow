@@ -212,6 +212,36 @@ class TestCostTrackerAndLogging(unittest.TestCase):
         result = _parse_token_usage("not json")
         self.assertEqual(result, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
+    def test_parse_token_usage_ndjson_step_finish(self):
+        from gdworkflow.orchestrate import _parse_token_usage
+
+        output = (
+            '{"type":"step_start","part":{"id":"p1"}}\n'
+            '{"type":"step_finish","part":{"tokens":{"total":12941,"input":1392,"output":61}}}\n'
+            '{"type":"step_start","part":{"id":"p2"}}\n'
+            '{"type":"step_finish","part":{"tokens":{"total":14461,"input":3343,"output":142}}}\n'
+        )
+        result = _parse_token_usage(output)
+        self.assertEqual(result["prompt_tokens"], 1392 + 3343)
+        self.assertEqual(result["completion_tokens"], 61 + 142)
+        self.assertEqual(result["total_tokens"], 12941 + 14461)
+
+    def test_parse_token_usage_ndjson_single_step_finish(self):
+        from gdworkflow.orchestrate import _parse_token_usage
+
+        output = '{"type":"step_finish","part":{"tokens":{"total":5000,"input":4000,"output":1000}}}\n'
+        result = _parse_token_usage(output)
+        self.assertEqual(result["prompt_tokens"], 4000)
+        self.assertEqual(result["completion_tokens"], 1000)
+        self.assertEqual(result["total_tokens"], 5000)
+
+    def test_parse_token_usage_ndjson_no_tokens(self):
+        from gdworkflow.orchestrate import _parse_token_usage
+
+        output = '{"type":"step_start","part":{"id":"p1"}}\n'
+        result = _parse_token_usage(output)
+        self.assertEqual(result, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+
     def test_write_agent_log(self):
         from gdworkflow.orchestrate import _write_agent_log
 

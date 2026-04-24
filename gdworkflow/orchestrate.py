@@ -304,6 +304,41 @@ def build_task_prompt(task: Task) -> str:
 
 
 def _parse_token_usage(output: str) -> dict:
+    total_prompt = 0
+    total_completion = 0
+    total_total = 0
+    found_tokens = False
+
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if isinstance(obj, dict) and obj.get("type") == "step_finish":
+            part = obj.get("part", {})
+            if isinstance(part, dict) and "tokens" in part:
+                tokens = part["tokens"]
+                if isinstance(tokens, dict):
+                    total_prompt += tokens.get("input", 0)
+                    total_completion += tokens.get("output", 0)
+                    total_total += tokens.get("total", 0)
+                    found_tokens = True
+                continue
+
+        if isinstance(obj, dict) and "usage" in obj:
+            usage = obj.get("usage", {})
+            total_prompt += usage.get("prompt_tokens", 0)
+            total_completion += usage.get("completion_tokens", 0)
+            total_total += usage.get("total_tokens", 0)
+            found_tokens = True
+
+    if found_tokens:
+        return {"prompt_tokens": total_prompt, "completion_tokens": total_completion, "total_tokens": total_total}
+
     try:
         data = json.loads(output)
         if isinstance(data, dict):
@@ -367,53 +402,79 @@ def dispatch_subagent(task: Task, worktree: Path, model: str = "opencode-go/glm-
     ]
 
     start = time.time()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PATH": os.environ.get("PATH", "")},
+    )
+
+    done_detected = False
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env={**os.environ, "PATH": os.environ.get("PATH", "")},
-        )
+        while True:
+            retcode = proc.poll()
+            if retcode is not None:
+                break
+            if done_file.exists():
+                done_detected = True
+                break
+            elapsed = time.time() - start
+            if elapsed >= timeout:
+                proc.kill()
+                proc.wait(timeout=10)
+                duration = time.time() - start
+                dr = DispatchResult(
+                    task_id=task.id,
+                    worktree=worktree,
+                    exit_code=-1,
+                    stdout="",
+                    stderr=f"Subagent timed out after {timeout}s",
+                    duration=duration,
+                    token_usage={},
+                )
+                _write_agent_log(worktree, task.id, "", f"Subagent timed out after {timeout}s",
+                                 -1, duration, {})
+                return dr
+            time.sleep(5)
+
+        if done_detected:
+            time.sleep(3)
+            for _ in range(10):
+                if proc.poll() is not None:
+                    break
+                time.sleep(1)
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+
+        stdout = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
+        stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
         duration = time.time() - start
-        token_usage = _parse_token_usage(result.stdout)
+        token_usage = _parse_token_usage(stdout)
+        exit_code = proc.returncode if proc.returncode is not None else 0
+
         dr = DispatchResult(
             task_id=task.id,
             worktree=worktree,
-            exit_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
             duration=duration,
             token_usage=token_usage,
         )
-        _write_agent_log(worktree, task.id, result.stdout, result.stderr,
-                         result.returncode, duration, token_usage)
+        _write_agent_log(worktree, task.id, stdout, stderr, exit_code, duration, token_usage)
         return dr
-    except subprocess.TimeoutExpired:
-        duration = time.time() - start
-        dr = DispatchResult(
-            task_id=task.id,
-            worktree=worktree,
-            exit_code=-1,
-            stdout="",
-            stderr=f"Subagent timed out after {timeout}s",
-            duration=duration,
-            token_usage={},
-        )
-        _write_agent_log(worktree, task.id, "", f"Subagent timed out after {timeout}s",
-                         -1, duration, {})
-        return dr
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=10)
+        raise
 
 
-def poll_done_file(worktree: Path, task_id: str, poll_interval: float = 10.0,
-                    max_wait: float = 3600) -> bool:
-    done_file = worktree / DONE_MARKER
-    start = time.time()
-    while time.time() - start < max_wait:
-        if done_file.exists():
-            return True
-        time.sleep(poll_interval)
-    return False
+
 
 
 def post_update_to_discord(channel: str, message: str, bot_url: str = "http://localhost:8080") -> bool:

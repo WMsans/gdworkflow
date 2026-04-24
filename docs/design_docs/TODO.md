@@ -116,14 +116,14 @@ Goal by end of week: features are automatically tested and screenshotted after s
 
 - [x] **Write a GDScript helper** `capture_scene.gd` that loads a given scene path, positions a camera, lets the scene run for N frames, and saves a PNG to a given output path. (3h)
 - [x] **Decide screenshot conventions**: camera framing, lighting, how many frames to let pass before capture. Document in a README. (1h)
-- [ ] **Test on 3 different feature scenes** of varying type (UI, 2D gameplay, 3D gameplay if applicable). (2h)
+- [ ] **Test on 3 different feature scenes** of varying type (UI, 2D gameplay, 3D gameplay if applicable). Use `fixtures/gdds/TODO_week3_integration.md` which covers 2D gameplay (orange triangle), UI (health bar), and 2D effects (spark particles). (2h)
 
 ### Reviewer agent **CRITICAL PATH**
 
 - [x] **Design the reviewer agent's system prompt**: write gdUnit4 tests for the feature scene, focus on behavioral tests of public API, run the tests, capture a screenshot, post results. (2h)
 - [x] **Implement reviewer invocation** in the orchestrator: after subagent `DONE`, start a second `opencode serve` in the same worktree with the reviewer agent config and POST the review task prompt. (2h)
 - [x] **Implement result posting to Discord** via new bot endpoint `post_review_result(feature, test_summary, screenshot_paths)`. Attach screenshots as Discord attachments. (3h)
-- [ ] **Test the reviewer end-to-end** on a completed subagent's output. (2h)
+- [ ] **Test the reviewer end-to-end** on a completed subagent's output. Use `fixtures/gdds/TODO_week3_integration.md` as the test TODO. (2h)
 
 ### Approval flow **CRITICAL PATH**
 
@@ -133,7 +133,7 @@ Goal by end of week: features are automatically tested and screenshotted after s
 
 ### End-of-week integration test
 
-- [ ] **Run the pipeline through approval**: TODO → 3 parallel subagents → reviewers → you approve one, reject one, approve one. Confirm rejection retry works. (3h)
+- [ ] **Run the pipeline through approval**: TODO → 3 parallel subagents → reviewers → you approve one, reject one, approve one. Confirm rejection retry works. Use `fixtures/gdds/TODO_week3_integration.md` and follow `docs/testing/week3_integration_test_guide.md`. (3h)
 
 Total: ~28 hours.
 
