@@ -8,6 +8,7 @@ services:
       - "8080:8080"
     volumes:
       - .worktrees:/app/.worktrees
+    restart: unless-stopped
 
   orchestrator:
     build:
@@ -20,3 +21,5 @@ services:
       - .worktrees:/app/.worktrees
       - .:/workspace
     working_dir: /workspace
+    environment:
+      - BOT_URL=http://bot:8080

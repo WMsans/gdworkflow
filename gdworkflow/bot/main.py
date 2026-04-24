@@ -19,6 +19,8 @@ from nextcord.ext import commands
 
 log = logging.getLogger("gdworkflow.bot")
 
+WORKTREES_DIR = Path(__file__).resolve().parent.parent.parent / ".worktrees"
+
 GUILD_ID = int(os.environ["DISCORD_GUILD_ID"]) if os.environ.get("DISCORD_GUILD_ID") else None
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 HTTP_PORT = int(os.environ.get("BOT_HTTP_PORT", "8080"))
@@ -163,6 +165,17 @@ class DiscordBot(commands.Bot):
         return True
 
 
+def _read_orchestrator_state() -> dict:
+    import json as _json
+    state_path = WORKTREES_DIR / "orchestrator_state.json"
+    if not state_path.exists():
+        return {"status": "unknown"}
+    try:
+        return _json.loads(state_path.read_text(encoding="utf-8"))
+    except (_json.JSONDecodeError, OSError):
+        return {"status": "unknown"}
+
+
 def create_bot(cfg: Config) -> DiscordBot:
     intents = nextcord.Intents.default()
     intents.guilds = True
@@ -211,6 +224,54 @@ def create_bot(cfg: Config) -> DiscordBot:
         ar.future.set_result("rejected")
         bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="rejected")
         await interaction.send(f"**Rejected** `{feature_id}`{' — ' + reason if reason else ''}")
+
+    @bot.slash_command(name="status", description="Show orchestrator status", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
+    async def _status(interaction: nextcord.Interaction):
+        state = _read_orchestrator_state()
+        if state.get("status") == "unknown":
+            await interaction.send("No orchestrator state found. Is the orchestrator running?", ephemeral=True)
+            return
+
+        lines = [
+            f"**Orchestrator Status: {state.get('status', 'unknown').upper()}**",
+            f"Batch: {state.get('current_batch', '?')}/{state.get('total_batches', '?')}",
+            f"Started: {state.get('started_at', 'unknown')}",
+            "",
+        ]
+        tasks = state.get("tasks", {})
+        if tasks:
+            lines.append("**Tasks:**")
+            for tid, info in tasks.items():
+                status = info.get("status", "unknown")
+                name = info.get("feature_name", tid)
+                emoji = {"running": "🔄", "completed": "✅", "failed": "❌", "pending": "⏳"}.get(status, "❓")
+                lines.append(f"  {emoji} `{tid}` ({name}): {status}")
+        else:
+            lines.append("No task information available.")
+
+        await interaction.send("\n".join(lines))
+
+    @bot.slash_command(name="cancel", description="Cancel a specific feature agent", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
+    async def _cancel_feature(interaction: nextcord.Interaction, feature_id: str):
+        signal_path = WORKTREES_DIR / f"cancel_{feature_id}"
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_path.write_text(f"cancel {feature_id}", encoding="utf-8")
+
+        ar = bot.pending_approvals.get(feature_id)
+        if ar is not None and not ar.future.done():
+            ar.status = "cancelled"
+            ar.reason = "Cancelled via /cancel command"
+            ar.future.set_result("rejected")
+            bot.approval_states[feature_id] = ApprovalState(feature_id=feature_id, status="cancelled")
+
+        await interaction.send(f"**Cancel signal sent** for `{feature_id}`. The agent will be terminated and the feature marked as failed.")
+
+    @bot.slash_command(name="cancel-run", description="Abort the entire milestone run", guild_ids=[cfg.guild_id] if cfg.guild_id else None)
+    async def _cancel_run(interaction: nextcord.Interaction):
+        signal_path = WORKTREES_DIR / "cancel_run"
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_path.write_text("cancel_run", encoding="utf-8")
+        await interaction.send("**Cancel-run signal sent.** The entire milestone will be aborted.")
 
     @bot.event
     async def on_message(message: nextcord.Message):
@@ -483,6 +544,38 @@ async def _handle_approval_status(request: aiohttp_web.Request) -> aiohttp_web.R
     return aiohttp_web.json_response({"approval_states": states})
 
 
+async def _handle_orchestrator_status(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    state = _read_orchestrator_state()
+    return aiohttp_web.json_response(state)
+
+
+async def _handle_cancel_feature(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    try:
+        body: dict[str, Any] = await request.json()
+    except json.JSONDecodeError:
+        return aiohttp_web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+    feature_id = body.get("feature_id", "")
+    if not feature_id:
+        return aiohttp_web.json_response({"ok": False, "error": "field 'feature_id' is required"}, status=400)
+
+    signal_path = WORKTREES_DIR / f"cancel_{feature_id}"
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    signal_path.write_text(f"cancel {feature_id}", encoding="utf-8")
+
+    if feature_id in request.app.get("bot", bot if 'bot' in dir() else {}).pending_approvals if False else {}:
+        pass
+
+    return aiohttp_web.json_response({"ok": True, "feature_id": feature_id, "message": f"Cancel signal sent for {feature_id}"})
+
+
+async def _handle_cancel_run(request: aiohttp_web.Request) -> aiohttp_web.Response:
+    signal_path = WORKTREES_DIR / "cancel_run"
+    signal_path.parent.mkdir(parents=True, exist_ok=True)
+    signal_path.write_text("cancel_run", encoding="utf-8")
+    return aiohttp_web.json_response({"ok": True, "message": "Cancel-run signal sent"})
+
+
 def create_http_app(bot: DiscordBot, cfg: Config) -> aiohttp_web.Application:
     app = aiohttp_web.Application()
     app["bot"] = bot
@@ -494,6 +587,9 @@ def create_http_app(bot: DiscordBot, cfg: Config) -> aiohttp_web.Application:
     app.router.add_post("/request_approval", _handle_request_approval)
     app.router.add_get("/health", _handle_health)
     app.router.add_get("/approval_status", _handle_approval_status)
+    app.router.add_get("/orchestrator_status", _handle_orchestrator_status)
+    app.router.add_post("/cancel_feature", _handle_cancel_feature)
+    app.router.add_post("/cancel_run", _handle_cancel_run)
     return app
 
 

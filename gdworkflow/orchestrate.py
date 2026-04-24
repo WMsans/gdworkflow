@@ -1,4 +1,4 @@
-"""Orchestrate multi-agent workflow: read TODO, create worktrees, dispatch subagents."""
+"""Orchestrate multi-agent workflow: read TODO, create worktrees, dispatch subagents, merge approved features."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+
+_shutdown_requested = False
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "todo_frontmatter.json"
 DONE_MARKER = "DONE"
@@ -861,10 +864,28 @@ def main():
                         help="Timeout for approval request in seconds (default: 3600)")
     parser.add_argument("--max-retries", type=int, default=2,
                         help="Maximum retries on rejection (default: 2)")
+    parser.add_argument("--merge", action="store_true",
+                        help="Merge approved features into base branch after review")
+    parser.add_argument("--skip-tests", action="store_true",
+                        help="Skip test suite during merge (use with --merge)")
+    parser.add_argument("--export-release", action="store_true",
+                        help="Export a release build after successful merge (use with --merge)")
+    parser.add_argument("--milestone-tag", action="store_true",
+                        help="Create a git milestone tag after successful merge (use with --merge)")
     args = parser.parse_args()
 
     if args.approve and not args.review:
         parser.error("--approve requires --review")
+
+    def _handle_shutdown(signum, frame):
+        global _shutdown_requested
+        _shutdown_requested = True
+        print(f"\nShutdown signal received (signal {signum}). Waiting for current tasks to finish...")
+        if not args.no_discord:
+            post_update_to_discord("orchestrator", "Shutdown signal received. Finishing current tasks...", args.bot_url)
+
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
 
     todo_path = Path(args.todo_file)
     if not todo_path.exists():
@@ -912,7 +933,7 @@ def main():
     worktrees_dir = git_root / ".worktrees"
     if worktrees_dir.exists():
         for wt in worktrees_dir.iterdir():
-            if wt.is_dir():
+            if wt.is_dir() and wt.name not in ("orchestrator_state.json",):
                 task_id = wt.name
                 print(f"  Removing existing worktree: {task_id}")
                 subprocess.run(["git", "worktree", "remove", str(wt), "--force"],
@@ -922,6 +943,17 @@ def main():
     else:
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
+    from gdworkflow.merger import write_orchestrator_state, check_cancel_run_signal, clear_cancel_run_signal
+
+    initial_state = {
+        "status": "running",
+        "current_batch": 0,
+        "total_batches": len(batches),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "tasks": {t.id: {"status": "pending", "feature_name": t.feature_name} for t in tasks},
+    }
+    write_orchestrator_state(initial_state, worktrees_dir)
+
     all_results: list[DispatchResult] = []
     all_review_results: list[ReviewResult] = []
     cost_records: list[CostRecord] = []
@@ -929,6 +961,27 @@ def main():
     approval_states: dict[str, ApprovalState] = {}
 
     for i, batch in enumerate(batches):
+        if _shutdown_requested:
+            print("\nShutdown requested. Stopping gracefully.")
+            if not args.no_discord:
+                post_update_to_discord("orchestrator", "Shutdown requested. Stopping gracefully.", args.bot_url)
+            break
+
+        if check_cancel_run_signal(worktrees_dir):
+            print("\nCancel-run signal received. Aborting milestone.")
+            if not args.no_discord:
+                post_update_to_discord("orchestrator", "Cancel-run signal received. Aborting milestone.", args.bot_url)
+            clear_cancel_run_signal(worktrees_dir)
+            break
+
+        state_update = {
+            "status": "running",
+            "current_batch": i + 1,
+            "total_batches": len(batches),
+            "started_at": initial_state.get("started_at", ""),
+            "tasks": {t.id: initial_state["tasks"].get(t.id, {}) for t in tasks},
+        }
+
         print(f"\n{'='*60}")
         print(f"Batch {i + 1}/{len(batches)}: {len(batch)} task(s)")
         print(f"{'='*60}")
@@ -943,12 +996,22 @@ def main():
         if args.sequential:
             batch_results: list[DispatchResult] = []
             for tid in batch:
+                if _shutdown_requested:
+                    break
+                from gdworkflow.merger import check_cancel_signal
+                if check_cancel_signal(tid, worktrees_dir):
+                    print(f"  Cancel signal received for {tid}, skipping")
+                    clear_cancel_signal(tid, worktrees_dir)
+                    failed_permanently.add(tid)
+                    continue
                 task = task_map[tid]
                 print(f"\n--- Dispatching: {task.id} ({task.feature_name}) ---")
                 worktree = create_worktree(task.id, args.base_branch)
                 print(f"  Worktree: {worktree}")
                 if not args.no_discord:
                     post_update_to_discord("features", f"**{task.id}**: Starting — {task.feature_name}", args.bot_url)
+                initial_state["tasks"][tid]["status"] = "running"
+                write_orchestrator_state({**initial_state, "tasks": dict(initial_state["tasks"])}, worktrees_dir)
                 result = dispatch_subagent(task, worktree, args.model, args.timeout)
                 batch_results.append(result)
         else:
@@ -1052,6 +1115,85 @@ def main():
             for r in completed:
                 summary_lines.append(f"  - {r.task_id}")
         post_update_to_discord("orchestrator", "\n".join(summary_lines), args.bot_url)
+
+    approved_task_ids = [fid for fid, state in approval_states.items() if state.status == "approved"]
+    auto_approved = [r for r in completed if r.task_id not in approval_states]
+    approved_for_merge = set(approved_task_ids) | {r.task_id for r in auto_approved if r.task_id not in failed_permanently}
+
+    if args.merge and approved_for_merge:
+        print(f"\n{'='*60}")
+        print("Merging approved features")
+        print(f"{'='*60}")
+
+        merge_tasks = []
+        for tid in approved_for_merge:
+            task = task_map.get(tid)
+            if task:
+                merge_tasks.append({
+                    "id": task.id,
+                    "feature_name": task.feature_name,
+                    "new_scene_path": task.new_scene_path,
+                    "integration_parent": task.integration_parent,
+                    "integration_hints": task.integration_hints,
+                })
+
+        from gdworkflow.merger import merge_approved_features, create_milestone_tag, announce_milestone
+
+        if not args.no_discord:
+            post_update_to_discord("orchestrator", f"Merging {len(merge_tasks)} approved features...", args.bot_url)
+
+        merge_results = merge_approved_features(
+            approved_tasks=merge_tasks,
+            worktrees_dir=worktrees_dir,
+            git_root=git_root,
+            base_branch=args.base_branch,
+            run_tests=not args.skip_tests,
+            bot_url=args.bot_url,
+            no_discord=args.no_discord,
+        )
+
+        merge_succeeded = [r for r in merge_results if r.success]
+        merge_failed = [r for r in merge_results if not r.success]
+
+        print(f"\n  Merged: {len(merge_succeeded)}")
+        for r in merge_succeeded:
+            print(f"    - {r.task_id}: {r.message}")
+        if merge_failed:
+            print(f"\n  Merge failed: {len(merge_failed)}")
+            for r in merge_failed:
+                print(f"    - {r.task_id}: {r.message}")
+
+        if args.milestone_tag and merge_succeeded:
+            tag = create_milestone_tag(git_root)
+            if tag:
+                print(f"\n  Created milestone tag: {tag}")
+                announce_milestone(
+                    bot_url=args.bot_url,
+                    tag=tag,
+                    merged_features=merge_results,
+                    cost_records=cost_records,
+                    no_discord=args.no_discord,
+                )
+            else:
+                print("\n  Warning: Failed to create milestone tag")
+
+        if args.export_release and merge_succeeded:
+            from gdworkflow.merger import export_release
+            print("\n  Exporting release build...")
+            if export_release(git_root):
+                print("  Release export succeeded")
+            else:
+                print("  Warning: Release export failed (Godot may not be configured for export)")
+
+    final_state = {
+        "status": "completed" if not _shutdown_requested else "shutdown",
+        "current_batch": len(batches),
+        "total_batches": len(batches),
+        "started_at": initial_state.get("started_at", ""),
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "tasks": {tid: {**info, "status": "completed" if tid in approved_for_merge else info.get("status", "unknown")} for tid, info in initial_state.get("tasks", {}).items()},
+    }
+    write_orchestrator_state(final_state, worktrees_dir)
 
 
 if __name__ == "__main__":

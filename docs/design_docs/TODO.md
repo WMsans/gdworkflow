@@ -145,23 +145,23 @@ Goal by end of week: approved features are automatically merged into `main`, mil
 
 ### Merger agent **CRITICAL PATH**
 
-- [ ] **Install `godot-parser` Python library** in the merger's container. Confirm it round-trips a `.tscn` file without data loss. (1.5h)
-- [ ] **Write the scene-integration function**: given parent `.tscn` path, feature `.tscn` path, and `integration_hints`, produce an updated parent scene with the feature instanced. (4h)
-- [ ] **Handle signal connections** specified in `integration_hints`: add the appropriate `[connection]` entries in the parent `.tscn`. (2h)
-- [ ] **Handle autoload registration** when `integration_hints.autoload: true`: update `project.godot`'s `[autoload]` section. (2h)
-- [ ] **Implement merge loop**: for each approved feature, integrate, commit, merge feature branch into `main`, run full test suite, revert on failure. (3h)
-- [ ] **Implement milestone tagging**: on full success, `git tag milestone-<timestamp>`. (0.5h)
-- [ ] **Implement release build export** (optional): `godot --headless --export-release`. (1.5h)
-- [ ] **Implement milestone announcement**: summary of merged features, token cost, test counts, posted to `#milestones`. (1.5h)
+- [x] **Write custom .tscn parser** (`gdworkflow/tscn_parser.py`) instead of `godot-parser`. Confirms round-trip of `.tscn` files. (Replaces godot-parser item — custom parser is more reliable for Godot 4.x.)
+- [x] **Write the scene-integration function**: given parent `.tscn` path, feature `.tscn` path, and `integration_hints`, produce an updated parent scene with the feature instanced. (4h)
+- [x] **Handle signal connections** specified in `integration_hints`: add the appropriate `[connection]` entries in the parent `.tscn`. (2h)
+- [x] **Handle autoload registration** when `integration_hints.autoload: true`: update `project.godot`'s `[autoload]` section. (2h)
+- [x] **Implement merge loop**: for each approved feature, integrate, commit, merge feature branch into `main`, run full test suite, revert on failure. (3h)
+- [x] **Implement milestone tagging**: on full success, `git tag milestone-<timestamp>`. (0.5h)
+- [x] **Implement release build export** (optional): `godot --headless --export-release`. (1.5h)
+- [x] **Implement milestone announcement**: summary of merged features, token cost, test counts, posted to `#milestones`. (1.5h)
 
 ### System polish and robustness **PARALLELIZABLE**
 
-- [ ] **Add graceful shutdown** to orchestrator: on SIGTERM, signal all subagents to commit and exit cleanly. (2h)
-- [ ] **Add a `/status` slash command** showing active agents, their state, current batch, and progress. (2h)
-- [ ] **Add a `/cancel <feature>` slash command** that terminates a specific agent and marks the feature as failed. (1.5h)
-- [ ] **Add a `/cancel-run` slash command** that aborts the entire milestone. (1h)
-- [ ] **Write a Docker Compose file** that runs orchestrator, Discord bot, and subagent runner as a single stack. (2h)
-- [ ] **Write a README** covering setup, common commands, and troubleshooting. (3h)
+- [x] **Add graceful shutdown** to orchestrator: on SIGTERM, signal all subagents to commit and exit cleanly. (2h)
+- [x] **Add a `/status` slash command** showing active agents, their state, current batch, and progress. (2h)
+- [x] **Add a `/cancel <feature>` slash command** that terminates a specific agent and marks the feature as failed. (1.5h)
+- [x] **Add a `/cancel-run` slash command** that aborts the entire milestone. (1h)
+- [x] **Write a Docker Compose file** that runs orchestrator, Discord bot, and subagent runner as a single stack. (2h)
+- [x] **Write a README** covering setup, common commands, and troubleshooting. (3h)
 
 ### Real-project validation **CRITICAL PATH**
 
