@@ -5,7 +5,7 @@
 #
 # Environment variables:
 #   DISCORD_BOT_URL — URL of the Discord bot HTTP server (default: http://localhost:8080)
-#   QUESTION_TIMEOUT — Seconds to wait for an answer (default: 300)
+#   QUESTION_TIMEOUT — Seconds to wait for an answer (default: 900)
 
 set -euo pipefail
 
@@ -14,7 +14,7 @@ FEATURE="${2:?Missing feature_name}"
 QUESTION="${3:?Missing question}"
 
 BOT_URL="${DISCORD_BOT_URL:-http://localhost:8080}"
-TIMEOUT="${QUESTION_TIMEOUT:-300}"
+TIMEOUT="${QUESTION_TIMEOUT:-900}"
 
 RESPONSE=$(curl -s -X POST \
   "${BOT_URL}/post_question" \

@@ -44,7 +44,7 @@ Where:
 
 ## Timeout behavior
 
-Questions time out after 5 minutes by default. If your question times out:
+Questions time out after 15 minutes by default. If your question times out:
 1. Commit all current work with a descriptive message
 2. Create a `DONE` marker file in the worktree root
 3. Exit cleanly — do not continue with assumptions

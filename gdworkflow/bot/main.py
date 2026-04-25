@@ -24,7 +24,7 @@ WORKTREES_DIR = Path(__file__).resolve().parent.parent.parent / ".worktrees"
 GUILD_ID = int(os.environ["DISCORD_GUILD_ID"]) if os.environ.get("DISCORD_GUILD_ID") else None
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 HTTP_PORT = int(os.environ.get("BOT_HTTP_PORT", "8080"))
-QUESTION_TIMEOUT = int(os.environ.get("QUESTION_TIMEOUT", "300"))
+QUESTION_TIMEOUT = int(os.environ.get("QUESTION_TIMEOUT", "900"))
 
 
 @dataclass
@@ -34,6 +34,8 @@ class PendingQuestion:
     feature: str
     question: str
     thread_id: int | None = None
+    message_id: int | None = None
+    channel_id: int | None = None
     future: asyncio.Future = field(default_factory=lambda: asyncio.get_event_loop().create_future())
     status: str = "pending"
 
@@ -146,6 +148,8 @@ class DiscordBot(commands.Bot):
             )
             thread = await msg.create_thread(name=thread_name)
             await thread.send(f"Question ID: `{pq.question_id}`\nPlease provide your answer below.")
+            pq.message_id = msg.id
+            pq.channel_id = ch.id
             return thread.id
         except nextcord.HTTPException as exc:
             log.error("Failed to create question thread: %s", exc)
@@ -406,6 +410,14 @@ async def _handle_post_question(request: aiohttp_web.Request) -> aiohttp_web.Res
         })
     except asyncio.TimeoutError:
         pq.status = "paused"
+        if pq.message_id is not None and pq.channel_id is not None:
+            try:
+                channel = bot.get_channel(pq.channel_id)
+                if channel is not None:
+                    msg = channel.get_partial_message(pq.message_id)
+                    await msg.add_reaction("❌")
+            except Exception as exc:
+                log.warning("Failed to add ❌ reaction on question timeout: %s", exc)
         return aiohttp_web.json_response({
             "ok": True,
             "status": "paused",
