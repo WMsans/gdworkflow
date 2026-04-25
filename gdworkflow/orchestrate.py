@@ -210,13 +210,13 @@ def create_worktree(task_id: str, base_branch: str = "main") -> Path:
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
                         capture_output=True, text=True, cwd=str(git_root))
 
-    result = subprocess.run(
+    subprocess.run(
         ["git", "branch", "-D", branch_name],
         capture_output=True, text=True, cwd=str(git_root),
     )
 
     result = subprocess.run(
-        ["git", "worktree", "add", str(worktree_path), "-b", branch_name, base_branch],
+        ["git", "worktree", "add", str(worktree_path), "-B", branch_name, base_branch],
         capture_output=True, text=True, cwd=str(git_root),
     )
     if result.returncode != 0:
@@ -239,8 +239,11 @@ def remove_worktree(task_id: str) -> None:
     if worktree_path.exists():
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
                         capture_output=True, cwd=str(git_root))
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
         subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
                         capture_output=True, cwd=str(git_root))
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
 
 
 def build_task_prompt(task: Task) -> str:
@@ -387,7 +390,7 @@ def _write_agent_log(worktree: Path, task_id: str, stdout: str, stderr: str,
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def dispatch_subagent(task: Task, worktree: Path, model: str = "opencode-go/glm-5.1",
+def dispatch_subagent(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
                        timeout: int = 1800) -> DispatchResult:
     prompt = build_task_prompt(task)
 
@@ -583,7 +586,7 @@ def build_review_prompt(task: Task) -> str:
     return "\n".join(parts)
 
 
-def dispatch_reviewer(task: Task, worktree: Path, model: str = "opencode-go/glm-5.1",
+def dispatch_reviewer(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
                      timeout: int = 600) -> ReviewResult:
     prompt = build_review_prompt(task)
 
@@ -842,8 +845,11 @@ def main():
                         help="Print dispatch plan without executing")
     parser.add_argument("--base-branch", default="main",
                         help="Base branch for worktrees (default: main)")
-    parser.add_argument("--model", default="opencode-go/glm-5.1",
-                        help="Model for subagents (default: opencode-go/glm-5.1)")
+    parser.add_argument("--model", default="deepseek/deepseek-v4-flash",
+                        help="Model in provider/model format (default: deepseek/deepseek-v4-flash). "
+                             "Configure API keys via 'opencode auth login'. "
+                             "Run 'opencode models' to see available models. "
+                             "Examples: deepseek/deepseek-v4-flash, anthropic/claude-sonnet-4-20250514")
     parser.add_argument("--max-batch", type=int, default=5,
                         help="Maximum parallel tasks per batch (default: 5)")
     parser.add_argument("--timeout", type=int, default=1800,
@@ -932,14 +938,18 @@ def main():
 
     worktrees_dir = git_root / ".worktrees"
     if worktrees_dir.exists():
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
         for wt in worktrees_dir.iterdir():
             if wt.is_dir() and wt.name not in ("orchestrator_state.json",):
                 task_id = wt.name
                 print(f"  Removing existing worktree: {task_id}")
                 subprocess.run(["git", "worktree", "remove", str(wt), "--force"],
-                                capture_output=True)
+                                capture_output=True, cwd=str(git_root))
+                if wt.exists():
+                    shutil.rmtree(wt, ignore_errors=True)
                 subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
-                                capture_output=True)
+                                capture_output=True, cwd=str(git_root))
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
     else:
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1021,6 +1031,8 @@ def main():
                                  args.base_branch, args.bot_url, args.no_discord)
             )
 
+        batch_has_failure = False
+
         for result in batch_results:
             done_file = result.worktree / DONE_MARKER
             if result.exit_code == 0 and done_file.exists():
@@ -1054,6 +1066,7 @@ def main():
 
             if status != "COMPLETED":
                 failed_permanently.add(result.task_id)
+                batch_has_failure = True
 
             if status == "COMPLETED" and args.review:
                 task = task_map[result.task_id]
@@ -1063,6 +1076,9 @@ def main():
                     if rejected_result is not None:
                         result = rejected_result
                         all_results.append(result)
+                    else:
+                        failed_permanently.add(result.task_id)
+                        batch_has_failure = True
                     continue
 
         all_results.extend(batch_results)
@@ -1071,10 +1087,22 @@ def main():
         if failed_in_batch:
             for r in failed_in_batch:
                 print(f"\n  FAILED: {r.task_id}")
-                print(f"    stderr: {r.stderr[:500]}")
+                if r.stderr:
+                    print(f"    stderr: {r.stderr[:500]}")
 
         completed_in_batch = [r for r in batch_results if r.exit_code == 0 and (r.worktree / DONE_MARKER).exists()]
         print(f"\nBatch {i + 1} complete: {len(completed_in_batch)} succeeded, {len(failed_in_batch)} failed")
+
+        if batch_has_failure:
+            print("\n  Stage failure detected. Aborting workflow (remaining batches will not run).")
+            if not args.no_discord:
+                post_update_to_discord(
+                    "orchestrator",
+                    f"Stage failure detected in batch {i + 1}. Aborting workflow.",
+                    args.bot_url,
+                )
+            _shutdown_requested = True
+            break
 
     print(f"\n{'='*60}")
     print("Workflow complete!")

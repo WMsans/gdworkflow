@@ -1,14 +1,12 @@
 import argparse
 import json
-import os
+import subprocess
 import sys
 from pathlib import Path
 
-import httpx
 import yaml
 
-API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-DEFAULT_MODEL = "opencode-go/glm-5.1"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "todo_frontmatter.json"
 
@@ -79,68 +77,44 @@ def load_schema() -> dict:
 
 
 def generate_todo(gdd_content: str, model: str) -> str:
-    api_key = os.environ.get("OPENCODE_GO_API_KEY")
-    if not api_key:
-        print("Error: OPENCODE_GO_API_KEY environment variable is not set.", file=sys.stderr)
-        sys.exit(1)
-
     schema = load_schema()
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Here is the Game Design Document. Break it into discrete, parallelizable feature tasks:\n\n{gdd_content}",
-        },
-    ]
+    user_msg = f"Here is the Game Design Document. Break it into discrete, parallelizable feature tasks:\n\n{gdd_content}"
 
-    request_body = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.3,
-    }
+    prompt = f"{SYSTEM_PROMPT}\n\n{user_msg}"
 
     if schema:
-        request_body["response_format"] = {"type": "json_object"}
-
-        schema_and_content = (
-            f"{messages[1]['content']}\n\n"
-            f"JSON Schema for reference:\n```json\n{json.dumps(schema, indent=2)}\n```\n\n"
+        prompt += (
+            f"\n\nJSON Schema for reference:\n```json\n{json.dumps(schema, indent=2)}\n```\n\n"
             f"Respond with a JSON object having a single key \"tasks\" whose value is an array of task objects conforming to this schema. "
             f"Also include a \"description\" field in each task object with the prose description for that feature."
         )
-        messages[1]["content"] = schema_and_content
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    cmd = ["opencode", "run", "--model", model, prompt]
 
     try:
-        with httpx.Client(timeout=120.0) as client:
-            response = client.post(API_URL, json=request_body, headers=headers)
-            response.raise_for_status()
-    except httpx.ConnectError:
-        print("Error: Could not connect to the OpenCode Go API. Is the service available?", file=sys.stderr)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except FileNotFoundError:
+        print("Error: 'opencode' not found. Install it from https://opencode.ai", file=sys.stderr)
         sys.exit(1)
-    except httpx.TimeoutException:
-        print("Error: Request to OpenCode Go API timed out.", file=sys.stderr)
-        sys.exit(1)
-    except httpx.HTTPStatusError as exc:
-        print(f"Error: API returned status {exc.response.status_code}: {exc.response.text}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("Error: opencode run timed out after 300s.", file=sys.stderr)
         sys.exit(1)
 
-    data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if result.returncode != 0:
+        print(f"Error: opencode run failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+
+    content = result.stdout.strip()
 
     if not content:
         print("Error: Empty response from the model.", file=sys.stderr)
         sys.exit(1)
 
-    if schema and "response_format" in request_body:
+    if schema:
         return _json_response_to_todo(content)
 
-    return content.strip()
+    return content
 
 
 def _json_response_to_todo(content: str) -> str:
@@ -231,11 +205,13 @@ def dry_run(gdd_path: Path) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate a TODO.md from a Game Design Document using GLM-5.1"
+        description="Generate a TODO.md from a Game Design Document using opencode"
     )
     parser.add_argument("gdd", help="Path to the GDD markdown file")
     parser.add_argument("--output", help="Output path for TODO.md (default: TODO.md in GDD directory)")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model to use (default: {DEFAULT_MODEL})")
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        help=f"Model to use in provider/model format (default: {DEFAULT_MODEL}). "
+                             f"Configure API keys via 'opencode auth login'.")
     parser.add_argument("--dry-run", action="store_true", help="Print a template TODO.md without making API calls")
     args = parser.parse_args()
 
