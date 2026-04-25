@@ -30,8 +30,8 @@ TODO.md → Orchestrator → Subagents (opencode) → Reviewers → Approval (Di
 - **Python 3.12+**
 - **Git** with worktree support
 - **Godot 4.x** (headless mode for tests and exports)
-- **OpenCode** CLI (`opencode`) with OpenCode Go subscription
-- **Discord bot token** (see setup below)
+- **OpenCode** CLI (`opencode`) — install from https://opencode.ai
+- **API keys** for your chosen model provider (see provider setup below)
 
 ### 1. Install dependencies
 
@@ -39,27 +39,44 @@ TODO.md → Orchestrator → Subagents (opencode) → Reviewers → Approval (Di
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment
+### 2. Provider setup
+
+Configure one or more LLM providers via the opencode CLI. This stores your API keys locally — no env vars needed:
+
+```bash
+# Interactive login — selects provider and prompts for API key
+opencode auth login
+
+# List configured providers
+opencode auth list
+```
+
+Supported providers include Anthropic, OpenAI, OpenCode Go, and many more. Run `opencode models` to see available models after logging in.
+
+### 3. Configure environment
 
 Copy `.env.example` to `.env` and fill in:
 
 ```env
 DISCORD_BOT_TOKEN=your_bot_token
 DISCORD_GUILD_ID=your_guild_id
-OPENCODE_GO_API_KEY=your_api_key
 BOT_HTTP_PORT=8080
 ```
 
-### 3. Create Discord channels
+### 4. Create Discord channels
 
 - `#orchestrator` — status messages
 - `#features` — per-feature threads, reviews, approvals
 - `#milestones` — milestone announcements
 
-### 4. Generate a TODO from a GDD
+### 5. Generate a TODO from a GDD
 
 ```bash
+# Using the default model (deepseek/deepseek-v4-flash)
 python -m gdworkflow.gen_todo docs/my_game_gdd.md --output TODO.md
+
+# Using a different provider/model
+python -m gdworkflow.gen_todo docs/my_game_gdd.md --model anthropic/claude-sonnet-4-20250514 --output TODO.md
 ```
 
 Or use `--dry-run` for a template without API calls:
@@ -68,13 +85,13 @@ Or use `--dry-run` for a template without API calls:
 python -m gdworkflow.gen_todo docs/my_game_gdd.md --dry-run
 ```
 
-### 5. Validate the TODO
+### 6. Validate the TODO
 
 ```bash
 python -m gdworkflow.validate_todo TODO.md
 ```
 
-### 6. Run the Discord bot
+### 7. Run the Discord bot
 
 ```bash
 python -m gdworkflow.bot.main
@@ -86,7 +103,7 @@ Or via Docker:
 docker compose up bot
 ```
 
-### 7. Run the orchestrator
+### 8. Run the orchestrator
 
 ```bash
 # Dry run (print plan, don't execute)
@@ -94,6 +111,9 @@ python -m gdworkflow.orchestrate TODO.md --dry-run
 
 # Full run with review and approval
 python -m gdworkflow.orchestrate TODO.md --review --approve
+
+# With a custom model provider
+python -m gdworkflow.orchestrate TODO.md --model anthropic/claude-sonnet-4-20250514 --review --approve
 
 # With merging enabled
 python -m gdworkflow.orchestrate TODO.md --review --approve --merge --milestone-tag
@@ -119,7 +139,7 @@ docker compose up
 |------|-------------|
 | `--dry-run` | Print dispatch plan without executing |
 | `--base-branch` | Base branch for worktrees (default: `main`) |
-| `--model` | Model for subagents (default: `opencode-go/glm-5.1`) |
+| `--model` | Model for subagents in `provider/model` format (default: `deepseek/deepseek-v4-flash`). Configure API keys via `opencode auth login` |
 | `--max-batch` | Max parallel tasks per batch (default: 5) |
 | `--timeout` | Timeout per subagent in seconds (default: 1800) |
 | `--bot-url` | Discord bot URL (default: `http://localhost:8080`) |
@@ -238,6 +258,18 @@ export GODOT_BIN=/path/to/godot
 ### "opencode not found"
 
 Install OpenCode: https://opencode.ai
+
+### "No API key configured for provider"
+
+Run `opencode auth login` to configure your provider's API key. Keys are stored in `~/.local/share/opencode/auth.json`.
+
+```bash
+# List configured providers
+opencode auth list
+
+# See available models
+opencode models
+```
 
 ### Discord bot not connecting
 

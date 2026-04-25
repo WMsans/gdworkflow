@@ -387,7 +387,7 @@ def _write_agent_log(worktree: Path, task_id: str, stdout: str, stderr: str,
     log_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def dispatch_subagent(task: Task, worktree: Path, model: str = "opencode-go/glm-5.1",
+def dispatch_subagent(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
                        timeout: int = 1800) -> DispatchResult:
     prompt = build_task_prompt(task)
 
@@ -583,7 +583,7 @@ def build_review_prompt(task: Task) -> str:
     return "\n".join(parts)
 
 
-def dispatch_reviewer(task: Task, worktree: Path, model: str = "opencode-go/glm-5.1",
+def dispatch_reviewer(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
                      timeout: int = 600) -> ReviewResult:
     prompt = build_review_prompt(task)
 
@@ -842,8 +842,11 @@ def main():
                         help="Print dispatch plan without executing")
     parser.add_argument("--base-branch", default="main",
                         help="Base branch for worktrees (default: main)")
-    parser.add_argument("--model", default="opencode-go/glm-5.1",
-                        help="Model for subagents (default: opencode-go/glm-5.1)")
+    parser.add_argument("--model", default="deepseek/deepseek-v4-flash",
+                        help="Model in provider/model format (default: deepseek/deepseek-v4-flash). "
+                             "Configure API keys via 'opencode auth login'. "
+                             "Run 'opencode models' to see available models. "
+                             "Examples: deepseek/deepseek-v4-flash, anthropic/claude-sonnet-4-20250514")
     parser.add_argument("--max-batch", type=int, default=5,
                         help="Maximum parallel tasks per batch (default: 5)")
     parser.add_argument("--timeout", type=int, default=1800,

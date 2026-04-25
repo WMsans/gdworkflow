@@ -265,7 +265,7 @@ class TestCostTrackerAndLogging(unittest.TestCase):
         from gdworkflow.orchestrate import CostRecord
 
         rec = CostRecord(task_id="feat-test", prompt_tokens=100,
-                         completion_tokens=50, total_tokens=150, model="opencode-go/glm-5.1")
+                         completion_tokens=50, total_tokens=150, model="deepseek/deepseek-v4-flash")
         self.assertEqual(rec.task_id, "feat-test")
         self.assertEqual(rec.total_tokens, 150)
 
