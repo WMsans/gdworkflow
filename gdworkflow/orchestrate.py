@@ -210,13 +210,13 @@ def create_worktree(task_id: str, base_branch: str = "main") -> Path:
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
                         capture_output=True, text=True, cwd=str(git_root))
 
-    result = subprocess.run(
+    subprocess.run(
         ["git", "branch", "-D", branch_name],
         capture_output=True, text=True, cwd=str(git_root),
     )
 
     result = subprocess.run(
-        ["git", "worktree", "add", str(worktree_path), "-b", branch_name, base_branch],
+        ["git", "worktree", "add", str(worktree_path), "-B", branch_name, base_branch],
         capture_output=True, text=True, cwd=str(git_root),
     )
     if result.returncode != 0:
@@ -239,8 +239,11 @@ def remove_worktree(task_id: str) -> None:
     if worktree_path.exists():
         subprocess.run(["git", "worktree", "remove", str(worktree_path), "--force"],
                         capture_output=True, cwd=str(git_root))
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
         subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
                         capture_output=True, cwd=str(git_root))
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
 
 
 def build_task_prompt(task: Task) -> str:
@@ -935,14 +938,18 @@ def main():
 
     worktrees_dir = git_root / ".worktrees"
     if worktrees_dir.exists():
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
         for wt in worktrees_dir.iterdir():
             if wt.is_dir() and wt.name not in ("orchestrator_state.json",):
                 task_id = wt.name
                 print(f"  Removing existing worktree: {task_id}")
                 subprocess.run(["git", "worktree", "remove", str(wt), "--force"],
-                                capture_output=True)
+                                capture_output=True, cwd=str(git_root))
+                if wt.exists():
+                    shutil.rmtree(wt, ignore_errors=True)
                 subprocess.run(["git", "branch", "-D", f"feat/{task_id}"],
-                                capture_output=True)
+                                capture_output=True, cwd=str(git_root))
+        subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
     else:
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1024,6 +1031,8 @@ def main():
                                  args.base_branch, args.bot_url, args.no_discord)
             )
 
+        batch_has_failure = False
+
         for result in batch_results:
             done_file = result.worktree / DONE_MARKER
             if result.exit_code == 0 and done_file.exists():
@@ -1057,6 +1066,7 @@ def main():
 
             if status != "COMPLETED":
                 failed_permanently.add(result.task_id)
+                batch_has_failure = True
 
             if status == "COMPLETED" and args.review:
                 task = task_map[result.task_id]
@@ -1066,6 +1076,9 @@ def main():
                     if rejected_result is not None:
                         result = rejected_result
                         all_results.append(result)
+                    else:
+                        failed_permanently.add(result.task_id)
+                        batch_has_failure = True
                     continue
 
         all_results.extend(batch_results)
@@ -1074,10 +1087,22 @@ def main():
         if failed_in_batch:
             for r in failed_in_batch:
                 print(f"\n  FAILED: {r.task_id}")
-                print(f"    stderr: {r.stderr[:500]}")
+                if r.stderr:
+                    print(f"    stderr: {r.stderr[:500]}")
 
         completed_in_batch = [r for r in batch_results if r.exit_code == 0 and (r.worktree / DONE_MARKER).exists()]
         print(f"\nBatch {i + 1} complete: {len(completed_in_batch)} succeeded, {len(failed_in_batch)} failed")
+
+        if batch_has_failure:
+            print("\n  Stage failure detected. Aborting workflow (remaining batches will not run).")
+            if not args.no_discord:
+                post_update_to_discord(
+                    "orchestrator",
+                    f"Stage failure detected in batch {i + 1}. Aborting workflow.",
+                    args.bot_url,
+                )
+            _shutdown_requested = True
+            break
 
     print(f"\n{'='*60}")
     print("Workflow complete!")

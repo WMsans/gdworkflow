@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -271,6 +272,28 @@ def _find_insert_index(lines: list[str], section: str) -> int:
     return len(lines)
 
 
+def _remove_all_worktrees(worktrees_dir: Path, git_root: Path) -> None:
+    """Remove all git worktrees to prevent branch checkout conflicts."""
+    if not worktrees_dir.exists():
+        return
+    subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
+    for wt_path in sorted(worktrees_dir.iterdir()):
+        if not wt_path.is_dir() or wt_path.name == "orchestrator_state.json":
+            continue
+        task_id = wt_path.name
+        subprocess.run(
+            ["git", "worktree", "remove", str(wt_path), "--force"],
+            capture_output=True, cwd=str(git_root),
+        )
+        if wt_path.exists():
+            shutil.rmtree(wt_path, ignore_errors=True)
+        subprocess.run(
+            ["git", "branch", "-D", f"feat/{task_id}"],
+            capture_output=True, cwd=str(git_root),
+        )
+    subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
+
+
 def merge_feature_branch(
     task_id: str,
     worktree_path: Path,
@@ -374,7 +397,18 @@ def merge_approved_features(
 
     results: list[IntegrationResult] = []
 
-    subprocess.run(["git", "checkout", base_branch], capture_output=True, cwd=str(git_root))
+    _remove_all_worktrees(worktrees_dir, git_root)
+
+    result = subprocess.run(
+        ["git", "checkout", base_branch],
+        capture_output=True, text=True, cwd=str(git_root),
+    )
+    if result.returncode != 0:
+        return [IntegrationResult(
+            task_id="system",
+            success=False,
+            message=f"Failed to checkout {base_branch}: {result.stderr}",
+        )]
 
     for task_info in approved_tasks:
         task_id = task_info.get("id", task_info.get("task_id", ""))
