@@ -246,15 +246,19 @@ def remove_worktree(task_id: str) -> None:
         subprocess.run(["git", "worktree", "prune"], capture_output=True, cwd=str(git_root))
 
 
-def build_task_prompt(task: Task) -> str:
+def build_task_prompt(task: Task, project_dir: str = "") -> str:
     parts = [
         f"# Task: {task.feature_name}",
         "",
         f"**Task ID**: {task.id}",
         f"**Scene Path**: {task.new_scene_path}",
-        f"**Integration Parent**: {task.integration_parent}",
-        "",
     ]
+
+    if project_dir:
+        parts.append(f"**Project Directory**: {project_dir}")
+
+    parts.append(f"**Integration Parent**: {task.integration_parent}")
+    parts.append("")
 
     if task.integration_hints:
         parts.append("## Integration Hints")
@@ -301,6 +305,10 @@ def build_task_prompt(task: Task) -> str:
     parts.append("  bash .opencode/skills/clarify-via-discord.sh \"<YOUR_TASK_ID>\" \"<YOUR_FEATURE_NAME>\" \"<YOUR_QUESTION>\"")
     parts.append("Ask ONE question at a time. Wait for the answer. Then proceed or ask the next question.")
     parts.append("")
+    if project_dir:
+        parts.append(f"- Work exclusively within the `{project_dir}/` directory. Ignore other directories in the sandbox.")
+        parts.append(f"- All file paths in this task are relative to `{project_dir}/`.")
+
     parts.append("## Rules")
     parts.append("- Create your scene as a NEW scene file. Do NOT modify existing scenes.")
     parts.append("- Commit frequently with descriptive messages.")
@@ -391,17 +399,19 @@ def _write_agent_log(worktree: Path, task_id: str, stdout: str, stderr: str,
 
 
 def dispatch_subagent(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
-                       timeout: int = 1800) -> DispatchResult:
-    prompt = build_task_prompt(task)
+                       timeout: int = 1800, project_dir: str = "") -> DispatchResult:
+    work_dir = (worktree / project_dir).resolve() if project_dir else worktree.resolve()
+    prompt = build_task_prompt(task, project_dir)
 
-    prompt_file = worktree / ".task_prompt.md"
+    prompt_file = work_dir / ".task_prompt.md"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_file.write_text(prompt)
 
-    done_file = worktree / DONE_MARKER
+    done_file = work_dir / DONE_MARKER
 
     cmd = [
         "opencode", "run",
-        "--dir", str(worktree.resolve()),
+        "--dir", str(work_dir),
         "--model", model,
         "--format", "json",
         prompt,
@@ -587,17 +597,19 @@ def build_review_prompt(task: Task) -> str:
 
 
 def dispatch_reviewer(task: Task, worktree: Path, model: str = "deepseek/deepseek-v4-flash",
-                     timeout: int = 600) -> ReviewResult:
+                     timeout: int = 600, project_dir: str = "") -> ReviewResult:
+    work_dir = (worktree / project_dir).resolve() if project_dir else worktree.resolve()
     prompt = build_review_prompt(task)
 
-    prompt_file = worktree / ".review_prompt.md"
+    prompt_file = work_dir / ".review_prompt.md"
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_file.write_text(prompt)
 
     from gdworkflow.junit_parser import parse_junit_xml
 
     cmd = [
         "opencode", "run",
-        "--dir", str(worktree.resolve()),
+        "--dir", str(work_dir),
         "--model", model,
         "--format", "json",
         prompt,
@@ -696,15 +708,17 @@ def post_cost_summary(cost_records: list[CostRecord], bot_url: str) -> bool:
 
 
 async def _dispatch_task_async(task: Task, worktree: Path, model: str,
-                                timeout: int, loop: asyncio.AbstractEventLoop) -> DispatchResult:
+                                timeout: int, loop: asyncio.AbstractEventLoop,
+                                project_dir: str = "") -> DispatchResult:
     def _run():
-        return dispatch_subagent(task, worktree, model, timeout)
+        return dispatch_subagent(task, worktree, model, timeout, project_dir)
     return await loop.run_in_executor(None, _run)
 
 
 async def _run_batch_async(batch: list[str], task_map: dict[str, Task],
                             model: str, timeout: int, base_branch: str,
-                            bot_url: str, no_discord: bool) -> list[DispatchResult]:
+                            bot_url: str, no_discord: bool,
+                            project_dir: str = "") -> list[DispatchResult]:
     loop = asyncio.get_event_loop()
     coros = []
     for tid in batch:
@@ -712,7 +726,7 @@ async def _run_batch_async(batch: list[str], task_map: dict[str, Task],
         worktree = create_worktree(task.id, base_branch)
         if not no_discord:
             post_update_to_discord("features", f"**{task.id}**: Starting — {task.feature_name}", bot_url)
-        coros.append(_dispatch_task_async(task, worktree, model, timeout, loop))
+        coros.append(_dispatch_task_async(task, worktree, model, timeout, loop, project_dir))
     results = await asyncio.gather(*coros, return_exceptions=True)
     dispatch_results: list[DispatchResult] = []
     for i, r in enumerate(results):
@@ -745,7 +759,8 @@ def _review_and_approve(result: DispatchResult, task: Task, args: argparse.Names
     if not args.no_discord:
         post_update_to_discord("features", f"**{task.id}**: Starting review", args.bot_url)
 
-    review_result = dispatch_reviewer(task, worktree, args.model, args.review_timeout)
+    review_result = dispatch_reviewer(task, worktree, args.model, args.review_timeout,
+                                       project_dir=getattr(args, "project_dir", ""))
 
     print(f"  {task.id} review: {review_result.verdict} (took {review_result.duration:.1f}s)")
     if review_result.test_summary:
@@ -816,7 +831,8 @@ def _handle_rejection(task: Task, reason: str, args: argparse.Namespace) -> Disp
         if not args.no_discord:
             post_update_to_discord("features", f"**{task.id}**: Retrying (attempt {retry_count})", args.bot_url)
 
-        result = dispatch_subagent(retry_task, worktree, args.model, args.timeout)
+        result = dispatch_subagent(retry_task, worktree, args.model, args.timeout,
+                                   project_dir=getattr(args, "project_dir", ""))
 
         done_file = result.worktree / DONE_MARKER
         if result.exit_code != 0 or not done_file.exists():
@@ -878,7 +894,10 @@ def main():
     parser.add_argument("--export-release", action="store_true",
                         help="Export a release build after successful merge (use with --merge)")
     parser.add_argument("--milestone-tag", action="store_true",
-                        help="Create a git milestone tag after successful merge (use with --merge)")
+                         help="Create a git milestone tag after successful merge (use with --merge)")
+    parser.add_argument("--project-dir", default="",
+                         help="Subdirectory within the sandbox/worktree that contains the target project. "
+                              "Only this directory will be visible to the implementer agent.")
     args = parser.parse_args()
 
     if args.approve and not args.review:
@@ -1023,13 +1042,15 @@ def main():
                     post_update_to_discord("features", f"**{task.id}**: Starting — {task.feature_name}", args.bot_url)
                 initial_state["tasks"][tid]["status"] = "running"
                 write_orchestrator_state({**initial_state, "tasks": dict(initial_state["tasks"])}, worktrees_dir)
-                result = dispatch_subagent(task, worktree, args.model, args.timeout)
+                result = dispatch_subagent(task, worktree, args.model, args.timeout,
+                                            project_dir=args.project_dir)
                 batch_results.append(result)
         else:
             print(f"\n--- Dispatching {len(batch)} tasks in parallel ---")
             batch_results = asyncio.run(
                 _run_batch_async(batch, task_map, args.model, args.timeout,
-                                 args.base_branch, args.bot_url, args.no_discord)
+                                 args.base_branch, args.bot_url, args.no_discord,
+                                 project_dir=args.project_dir)
             )
 
         batch_has_failure = False
