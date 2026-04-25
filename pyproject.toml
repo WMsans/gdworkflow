@@ -10,6 +10,9 @@ dependencies = [
     "aiohttp>=3.9",
 ]
 
+[tool.setuptools.packages.find]
+include = ["gdworkflow*"]
+
 [project.scripts]
 gen-todo = "gdworkflow.gen_todo:main"
 validate-todo = "gdworkflow.validate_todo:main"
