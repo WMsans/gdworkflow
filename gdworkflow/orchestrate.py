@@ -839,6 +839,7 @@ def _handle_rejection(task: Task, reason: str, args: argparse.Namespace) -> Disp
 
 
 def main():
+    global _shutdown_requested
     parser = argparse.ArgumentParser(description="Orchestrate multi-agent workflow from a TODO.md file")
     parser.add_argument("todo_file", help="Path to the TODO.md file")
     parser.add_argument("--dry-run", action="store_true",
