@@ -231,6 +231,91 @@ bash scripts/run_tests.sh --project-dir sandbox --output reports/junit.xml
 bash scripts/capture_screenshot.sh --scene res://scenes/main.tscn --output screenshots/main.png --project-dir sandbox
 ```
 
+## Using with an Existing Godot Project
+
+The sandbox (`sandbox/`) is the default for testing, but gdworkflow works with any existing Godot project.
+
+### Project layout options
+
+**Inside the gdworkflow repo** (recommended):
+
+```
+gdworkflow/
+├── my_game/                ← your Godot project
+│   ├── project.godot
+│   ├── scenes/
+│   ├── scripts/
+│   └── test/
+├── gdworkflow/             ← Python modules
+├── schemas/
+└── TODO.md
+```
+
+**Separate directory** — pass `--project-dir` to every command, or symlink it into the tree.
+
+### TODO paths — no sandbox prefix
+
+Paths in TODO frontmatter should be relative to your Godot project root (omit `sandbox/`):
+
+```yaml
+---
+id: feat-my-feature
+new_scene_path: scenes/features/my_feature.tscn
+integration_parent: scenes/main.tscn       # relative to your project root
+---
+```
+
+### Run with `--project-dir`
+
+```bash
+# Godot project inside the repo:
+python -m gdworkflow.orchestrate TODO.md --project-dir my_game --review --approve --merge
+
+# Godot project elsewhere:
+python -m gdworkflow.orchestrate TODO.md --project-dir /path/to/your/project --review --approve --merge
+```
+
+The `--project-dir` flag applies to:
+
+| Operation | Sandbox default | With `--project-dir <DIR>` |
+|-----------|----------------|----------------------------|
+| Test suite | `sandbox/` | `<DIR>/test/` |
+| Autoload registration | `sandbox/project.godot` | `<DIR>/project.godot` |
+| Scene merging | Paths from TODO | Same (paths are relative to `<DIR>`) |
+| Release export | `sandbox/` | `<DIR>` |
+
+### Requirements for your Godot project
+
+- **gdUnit4** installed at `addons/gdUnit4/` and enabled in `project.godot` (required for automated testing during merge)
+- The Godot binary must support headless mode (standard `godot4` binary works)
+- Set `GODOT_BIN` environment variable if `godot` isn't on your PATH: `export GODOT_BIN=/path/to/godot4`
+
+### Example: end-to-end with a real project
+
+```bash
+# 1. Generate a TODO from your GDD
+python -m gdworkflow.gen_todo docs/game_design.md --output TODO.md
+
+# 2. Validate it
+python -m gdworkflow.validate_todo TODO.md
+
+# 3. Start the Discord bot
+python -m gdworkflow.bot.main &
+
+# 4. Run orchestrator targeting your project
+python -m gdworkflow.orchestrate TODO.md \
+  --project-dir my_game \
+  --review --approve --merge --milestone-tag
+```
+
+### Key differences from sandbox usage
+
+| | Sandbox | Real project |
+|---|---|---|
+| TODO path prefix | `sandbox/scenes/main.tscn` | `scenes/main.tscn` |
+| project.godot location | `sandbox/` | Your project root |
+| Run command | `orchestrate` (no flag) | `orchestrate --project-dir my_game` |
+
 ## Merger Pipeline
 
 When `--merge` is enabled, approved features go through:
