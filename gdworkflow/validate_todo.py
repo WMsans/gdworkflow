@@ -96,48 +96,47 @@ def check_dependency_cycles(tasks: list[tuple[dict, str]]) -> list[str]:
     return []
 
 
-def _git_file_exists(filepath: str) -> bool:
+def _git_file_exists(filepath: str, project_dir: str | None = None) -> bool:
     try:
-        result = subprocess.run(
-            ["git", "ls-files", "--error-unmatch", filepath],
-            capture_output=True,
-            text=True,
-        )
+        cmd = ["git", "ls-files", "--error-unmatch", filepath]
+        kwargs = {}
+        if project_dir:
+            cmd = ["git", "-C", project_dir, "ls-files", "--error-unmatch", filepath]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode == 0
     except FileNotFoundError:
         return False
 
 
-def _is_git_repo() -> bool:
+def _is_git_repo(project_dir: str | None = None) -> bool:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-        )
+        cmd = ["git", "rev-parse", "--is-inside-work-tree"]
+        if project_dir:
+            cmd = ["git", "-C", project_dir, "rev-parse", "--is-inside-work-tree"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode == 0
     except FileNotFoundError:
         return False
 
 
-def check_new_scene_paths(tasks: list[tuple[dict, str]]) -> list[str]:
+def check_new_scene_paths(tasks: list[tuple[dict, str]], project_dir: str | None = None) -> list[str]:
     errors = []
-    if not _is_git_repo():
+    if not _is_git_repo(project_dir):
         return errors
     for fm, _ in tasks:
         path = fm.get("new_scene_path", "")
-        if _git_file_exists(path):
+        if _git_file_exists(path, project_dir):
             errors.append(f"  {fm['id']}: new_scene_path '{path}' already exists in the repo")
     return errors
 
 
-def check_integration_parents(tasks: list[tuple[dict, str]]) -> list[str]:
+def check_integration_parents(tasks: list[tuple[dict, str]], project_dir: str | None = None) -> list[str]:
     errors = []
-    if not _is_git_repo():
+    if not _is_git_repo(project_dir):
         return [f"  SKIPPED: not in a git repo, integration_parent existence cannot be checked"]
     for fm, _ in tasks:
         path = fm.get("integration_parent", "")
-        if not _git_file_exists(path):
+        if not _git_file_exists(path, project_dir):
             errors.append(f"  {fm['id']}: integration_parent '{path}' does not exist in the repo")
     return errors
 
@@ -155,11 +154,20 @@ def check_touches_existing_files(tasks: list[tuple[dict, str]]) -> list[str]:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python -m gdworkflow.validate_todo <path/to/TODO.md>", file=sys.stderr)
+    args = sys.argv[1:]
+    project_dir = None
+
+    if "--project-dir" in args:
+        idx = args.index("--project-dir")
+        if idx + 1 < len(args):
+            project_dir = args[idx + 1]
+            args = args[:idx] + args[idx + 2:]
+
+    if len(args) < 1:
+        print("Usage: python -m gdworkflow.validate_todo <path/to/TODO.md> [--project-dir <dir>]", file=sys.stderr)
         sys.exit(1)
 
-    todo_path = Path(sys.argv[1])
+    todo_path = Path(args[0])
     if not todo_path.exists():
         print(f"FAIL: file not found: {todo_path}", file=sys.stderr)
         sys.exit(1)
@@ -178,8 +186,8 @@ def main():
         ("Schema validation", lambda: check_schema_validation(tasks, schema)),
         ("depends_on references", lambda: check_depends_on_references(tasks)),
         ("Dependency cycles", lambda: check_dependency_cycles(tasks)),
-        ("new_scene_path existence", lambda: check_new_scene_paths(tasks)),
-        ("integration_parent existence", lambda: check_integration_parents(tasks)),
+        ("new_scene_path existence", lambda: check_new_scene_paths(tasks, project_dir)),
+        ("integration_parent existence", lambda: check_integration_parents(tasks, project_dir)),
         ("touches_existing_files empty", lambda: check_touches_existing_files(tasks)),
     ]
 
